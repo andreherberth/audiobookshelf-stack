@@ -1,0 +1,7 @@
+.env
+data/
+rclone/rclone.conf
+
+# OS / editor
+.DS_Store
+*.swp

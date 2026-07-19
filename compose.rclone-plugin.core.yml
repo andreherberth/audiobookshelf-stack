@@ -1,0 +1,42 @@
+# Rclone volume plugin stack: Audiobookshelf only (no reverse proxy).
+# Requires: docker plugin install + host rclone.conf (see README).
+# Add Caddy: docker compose -f compose.rclone-plugin.core.yml -f compose.rclone-plugin.caddy.yml up -d
+
+services:
+  audiobookshelf:
+    image: ghcr.io/advplyr/audiobookshelf:latest
+    container_name: audiobookshelf
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./data/config:/config
+      - ./data/metadata:/metadata
+      - type: volume
+        source: s3_media
+        target: /audiobooks
+        volume:
+          subpath: audiobooks
+      - type: volume
+        source: s3_media
+        target: /podcasts
+        volume:
+          subpath: podcasts
+    ports:
+      - "${ABS_HOST_PORT:-13378}:80"
+    networks:
+      - web
+
+volumes:
+  s3_media:
+    driver: rclone
+    driver_opts:
+      remote: "hetzner:${S3_BUCKET}"
+      allow_other: "true"
+      vfs_cache_mode: full
+      no_modtime: "true"
+      poll_interval: 15s
+
+networks:
+  web:
+    name: audiobookshelf_web
