@@ -1,0 +1,8 @@
+[hetzner]
+type = s3
+provider = Hetzner
+access_key_id = YOUR_ACCESS_KEY
+secret_access_key = YOUR_SECRET_KEY
+endpoint = fsn1.your-objectstorage.com
+region = fsn1
+acl = private

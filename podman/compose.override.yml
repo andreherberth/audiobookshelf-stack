@@ -1,0 +1,26 @@
+# Podman overrides — merge with any sidecar compose file:
+#   podman compose -f compose.yml -f podman/compose.override.yml up -d
+
+services:
+  rclone:
+    userns_mode: keep-id
+    volumes:
+      - rclone_cache:/cache:Z
+      - media_audiobooks:/mnt/audiobooks:Z
+
+  rclone-podcasts:
+    userns_mode: keep-id
+    volumes:
+      - rclone_cache_podcasts:/cache:Z
+      - media_podcasts:/mnt/podcasts:Z
+
+  audiobookshelf:
+    userns_mode: keep-id
+    volumes:
+      - ./data/config:/config:Z
+      - ./data/metadata:/metadata:Z
+      - media_audiobooks:/audiobooks:Z
+      - media_podcasts:/podcasts:Z
+
+  caddy:
+    userns_mode: keep-id
