@@ -1,4 +1,8 @@
-# Storage Box (SFTP) overlay for the rclone sidecar stack.
+# Storage Box (SFTP) FUSE mount overlay for the rclone sidecar stack.
+# This mounts the Storage Box into Audiobookshelf — it does NOT sync/copy
+# the library onto the VPS. Media stays on the Storage Box; the VPS only
+# keeps ABS config/metadata plus a bounded rclone VFS cache.
+#
 # Requires SSH support enabled on the Storage Box in Hetzner Console.
 #
 # Usage:
@@ -27,11 +31,15 @@ services:
       - /mnt/audiobooks
       - --allow-other
       - --vfs-cache-mode
-      - full
+      - ${VFS_CACHE_MODE:-full}
+      - --vfs-cache-max-size
+      - ${VFS_CACHE_MAX_SIZE:-2G}
+      - --vfs-cache-max-age
+      - ${VFS_CACHE_MAX_AGE:-72h}
       - --cache-dir
       - /cache
       - --dir-cache-time
-      - 72h
+      - ${VFS_DIR_CACHE_TIME:-72h}
       - --checkers
       - "4"
 
@@ -51,11 +59,15 @@ services:
       - /mnt/podcasts
       - --allow-other
       - --vfs-cache-mode
-      - full
+      - ${VFS_CACHE_MODE:-full}
+      - --vfs-cache-max-size
+      - ${VFS_CACHE_MAX_SIZE:-2G}
+      - --vfs-cache-max-age
+      - ${VFS_CACHE_MAX_AGE:-72h}
       - --cache-dir
       - /cache
       - --dir-cache-time
-      - 72h
+      - ${VFS_DIR_CACHE_TIME:-72h}
       - --checkers
       - "4"
 
@@ -75,10 +87,14 @@ services:
       - /mnt/ebooks
       - --allow-other
       - --vfs-cache-mode
-      - full
+      - ${VFS_CACHE_MODE:-full}
+      - --vfs-cache-max-size
+      - ${VFS_CACHE_MAX_SIZE:-2G}
+      - --vfs-cache-max-age
+      - ${VFS_CACHE_MAX_AGE:-72h}
       - --cache-dir
       - /cache
       - --dir-cache-time
-      - 72h
+      - ${VFS_DIR_CACHE_TIME:-72h}
       - --checkers
       - "4"

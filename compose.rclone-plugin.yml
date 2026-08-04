@@ -57,7 +57,9 @@ volumes:
     driver_opts:
       remote: "${RCLONE_REMOTE:-hetzner:${S3_BUCKET}}"
       allow_other: "true"
-      vfs_cache_mode: full
+      vfs_cache_mode: "${VFS_CACHE_MODE:-full}"
+      vfs_cache_max_size: "${VFS_CACHE_MAX_SIZE:-2G}"
+      vfs_cache_max_age: "${VFS_CACHE_MAX_AGE:-72h}"
       no_modtime: "true"
       poll_interval: 15s
   caddy_data:

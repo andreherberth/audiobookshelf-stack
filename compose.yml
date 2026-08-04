@@ -19,11 +19,15 @@ services:
       - /mnt/audiobooks
       - --allow-other
       - --vfs-cache-mode
-      - full
+      - ${VFS_CACHE_MODE:-full}
+      - --vfs-cache-max-size
+      - ${VFS_CACHE_MAX_SIZE:-2G}
+      - --vfs-cache-max-age
+      - ${VFS_CACHE_MAX_AGE:-72h}
       - --cache-dir
       - /cache
       - --dir-cache-time
-      - 72h
+      - ${VFS_DIR_CACHE_TIME:-72h}
     cap_add:
       - SYS_ADMIN
     devices:
@@ -61,11 +65,15 @@ services:
       - /mnt/podcasts
       - --allow-other
       - --vfs-cache-mode
-      - full
+      - ${VFS_CACHE_MODE:-full}
+      - --vfs-cache-max-size
+      - ${VFS_CACHE_MAX_SIZE:-2G}
+      - --vfs-cache-max-age
+      - ${VFS_CACHE_MAX_AGE:-72h}
       - --cache-dir
       - /cache
       - --dir-cache-time
-      - 72h
+      - ${VFS_DIR_CACHE_TIME:-72h}
     cap_add:
       - SYS_ADMIN
     devices:
@@ -103,11 +111,15 @@ services:
       - /mnt/ebooks
       - --allow-other
       - --vfs-cache-mode
-      - full
+      - ${VFS_CACHE_MODE:-full}
+      - --vfs-cache-max-size
+      - ${VFS_CACHE_MAX_SIZE:-2G}
+      - --vfs-cache-max-age
+      - ${VFS_CACHE_MAX_AGE:-72h}
       - --cache-dir
       - /cache
       - --dir-cache-time
-      - 72h
+      - ${VFS_DIR_CACHE_TIME:-72h}
     cap_add:
       - SYS_ADMIN
     devices:

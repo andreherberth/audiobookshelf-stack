@@ -1,8 +1,11 @@
 # Audiobookshelf + Hetzner storage + Caddy
 
-A Docker/Podman Compose stack for deploying [Audiobookshelf](https://www.audiobookshelf.org/) with media on **Hetzner Object Storage (S3)** or a **Hetzner Storage Box (SFTP)**, and Caddy as the default reverse proxy.
+A Docker/Podman Compose stack for deploying [Audiobookshelf](https://www.audiobookshelf.org/) with media on **Hetzner Object Storage (S3)** or a **Hetzner Storage Box**, and Caddy as the default reverse proxy.
 
-Audiobookshelf does not support remote object/block storage natively. This stack mounts your remote as a local filesystem via [rclone](https://rclone.org/). The SQLite database (`/config`) and metadata cache always stay on local disk.
+Built for small VPS disks: your library stays on Hetzner. This stack **FUSE-mounts** the remote with [rclone](https://rclone.org/) (`rclone mount`) — it does **not** sync or mirror the library onto the VPS. Local disk only holds:
+
+- Audiobookshelf `/config` (SQLite) and `/metadata`
+- A **bounded** rclone VFS cache (default 2G per mount) used while streaming/scanning
 
 ## Quick start — Object Storage (S3)
 
@@ -13,6 +16,7 @@ Audiobookshelf does not support remote object/block storage natively. This stack
    cp .env.example .env
    # Set S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION, S3_ENDPOINT, S3_BUCKET
    # Leave STORAGE_BACKEND=objectstorage
+   # Tune VFS_CACHE_MAX_SIZE if the VPS disk is tight (default 2G)
    ```
 
 3. Create local data directories:
@@ -21,7 +25,7 @@ Audiobookshelf does not support remote object/block storage natively. This stack
    mkdir -p data/config data/metadata
    ```
 
-4. Start the stack:
+4. Start the stack (rclone mounts the bucket; nothing is synced down):
 
    ```bash
    docker compose up -d
@@ -30,13 +34,13 @@ Audiobookshelf does not support remote object/block storage natively. This stack
 5. Open your instance (e.g. `https://books.example.com` or `http://localhost` if `DOMAIN=:80`).
 6. In Audiobookshelf, add a library pointing at `/audiobooks` (and optionally `/podcasts`, `/ebooks`).
 
-Upload media with `rclone copy`, the Hetzner Console, or any S3 client:
+Upload media **to Hetzner** (from your PC or another machine — not a VPS sync job):
 
 ```bash
 rclone copy ./my-book/ hetzner:my-audiobooks/audiobooks/my-book/
 ```
 
-## Quick start — Storage Box (SFTP)
+## Quick start — Storage Box (SFTP mount)
 
 1. Create a [Hetzner Storage Box](https://docs.hetzner.com/storage/storage-box/) and **enable SSH support** in Hetzner Console.
 2. Copy and edit the environment file:
@@ -56,12 +60,18 @@ rclone copy ./my-book/ hetzner:my-audiobooks/audiobooks/my-book/
    docker compose -f compose.yml -f compose.storagebox.yml up -d
    ```
 
+   That runs `rclone mount` over SFTP into `/audiobooks` (FUSE). Files remain on the Storage Box.
+
 4. In Audiobookshelf, add libraries pointing at `/audiobooks` (and optionally `/podcasts`, `/ebooks`).
 
-Upload media over SFTP/rsync/rclone:
+Upload media **to the Storage Box** from elsewhere (PC, another host). Examples:
 
 ```bash
+# rclone (SFTP remote named storagebox)
 rclone copy ./my-book/ storagebox:audiobooks/my-book/
+
+# or rsync over SSH port 23
+rsync -e 'ssh -p23' -av ./my-book/ uXXXXX@uXXXXX.your-storagebox.de:audiobooks/my-book/
 ```
 
 Storage Box accounts allow a limited number of simultaneous connections (typically 10). The Storage Box overlay caps rclone checkers to stay within that limit.
@@ -70,9 +80,9 @@ Storage Box accounts allow a limited number of simultaneous connections (typical
 
 | File | Description |
 |------|-------------|
-| `compose.yml` | **Default** — Object Storage sidecar + Audiobookshelf + Caddy |
+| `compose.yml` | **Default** — Object Storage FUSE mount + Audiobookshelf + Caddy |
 | `compose.core.yml` | Sidecar stack without proxy (exposes port `13378`) |
-| `compose.storagebox.yml` | Overlay — switches sidecar remotes from S3 to Storage Box SFTP |
+| `compose.storagebox.yml` | Overlay — mounts Storage Box via SFTP instead of S3 |
 | `compose.caddy.yml` | Caddy overlay — pairs with any core file |
 | `compose.rclone-plugin.yml` | Plugin stack + Caddy (all-in-one) |
 | `compose.rclone-plugin.core.yml` | Plugin stack without proxy |
@@ -104,7 +114,7 @@ docker compose -f compose.yml -f compose.storagebox.yml --profile podcasts --pro
 
 ### Rclone Docker volume plugin (Docker Engine)
 
-Uses the native `rclone` volume driver. Requires a one-time host setup.
+Uses the native `rclone` volume driver (still a mount, not a sync). Requires a one-time host setup.
 
 ```bash
 # 1. Configure credentials on the host
@@ -215,6 +225,10 @@ labels:
 | `STORAGEBOX_PORT` | SSH/SFTP port (default `23`) |
 | `STORAGEBOX_PATH` | Optional prefix on the box, with trailing slash (e.g. `media/`) |
 | `RCLONE_REMOTE` | Plugin volume remote (`hetzner:bucket` or `storagebox:`) |
+| `VFS_CACHE_MODE` | rclone VFS mode (default `full` — best for ABS seeking) |
+| `VFS_CACHE_MAX_SIZE` | Max local cache per mount (default `2G`) — keep this small on tiny VPS disks |
+| `VFS_CACHE_MAX_AGE` | Evict unused cache entries after this age (default `72h`) |
+| `VFS_DIR_CACHE_TIME` | How long directory listings are cached (default `72h`) |
 | `DOMAIN` | Caddy site address (`books.example.com` or `:80` for local HTTP) |
 | `ACME_EMAIL` | Email for Let's Encrypt (production HTTPS) |
 | `ABS_HOST_PORT` | Host port when running without Caddy (default `13378`) |
@@ -235,9 +249,11 @@ See [rclone/rclone.conf.example](rclone/rclone.conf.example). Copy to `/var/lib/
 
 ## Important notes
 
+- **Mount, not sync** — rclone exposes the remote as a filesystem. The library is not copied onto the VPS.
 - **Never put `/config` on remote storage** — the SQLite database must be on local disk ([ABS docs](https://www.audiobookshelf.org/docs/install/docker/)).
-- First library scans over remote storage can be slow while the rclone VFS cache warms up.
-- Object Storage sidecar credentials come from `.env`. Storage Box sidecar credentials also come from `.env` (`STORAGEBOX_*`). The plugin variant reads remotes from host `rclone.conf`.
+- Bound `VFS_CACHE_MAX_SIZE` to what your VPS can spare (per mount: audiobooks, plus podcasts/ebooks if enabled).
+- First library scans can be slow while directory listings and the VFS cache warm up.
+- Object Storage / Storage Box sidecar credentials come from `.env`. The plugin variant reads remotes from host `rclone.conf`.
 - Storage Box: enable **SSH support** in the console; SFTP uses **port 23**. Prefer an SSH key in the plugin `rclone.conf` (`key_file`) when you can.
 
 ## Stack comparison
