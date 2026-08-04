@@ -83,6 +83,8 @@ Storage Box accounts allow a limited number of simultaneous connections (typical
 | `compose.yml` | **Default** — Object Storage FUSE mount + Audiobookshelf + Caddy |
 | `compose.core.yml` | Sidecar stack without proxy (exposes port `13378`) |
 | `compose.storagebox.yml` | Overlay — mounts Storage Box via SFTP instead of S3 |
+| `compose.coolify.yml` | **Coolify** — Object Storage mount (no Caddy / no custom networks) |
+| `compose.coolify.storagebox.yml` | **Coolify** — Storage Box SFTP mount |
 | `compose.caddy.yml` | Caddy overlay — pairs with any core file |
 | `compose.rclone-plugin.yml` | Plugin stack + Caddy (all-in-one) |
 | `compose.rclone-plugin.core.yml` | Plugin stack without proxy |
@@ -137,6 +139,33 @@ docker compose -f compose.rclone-plugin.core.yml -f compose.rclone-plugin.caddy.
 ```
 
 Create `audiobooks`, `podcasts`, and `ebooks` prefixes on the remote before starting (plugin subpath mounts require them).
+
+## Coolify
+
+Yes — use the Coolify-specific compose files. Coolify already provides the reverse proxy, so these files omit Caddy, custom networks, fixed `container_name`s, and host port publishes.
+
+### Deploy
+
+1. In Coolify: **New Resource** → your Git repo → build pack **Docker Compose**.
+2. Set **Docker Compose Location** to one of:
+   - `/compose.coolify.yml` — Hetzner Object Storage (S3)
+   - `/compose.coolify.storagebox.yml` — Hetzner Storage Box (SFTP mount)
+3. Fill environment variables in the Coolify UI (`S3_*` or `STORAGEBOX_*`, plus optional `VFS_CACHE_MAX_SIZE`).
+4. Assign your domain to the **audiobookshelf** service (listens on container port `80`).
+5. Deploy.
+
+For Storage Box, obscure the password first (`./scripts/obscure-password.sh '…'`) and paste into `STORAGEBOX_PASS`. Create `audiobooks/` (and `podcasts/` / `ebooks/` if you keep those services) on the box before the first deploy.
+
+### Coolify notes
+
+| Topic | Detail |
+|-------|--------|
+| Proxy | Use Coolify's proxy — do not run the stack's Caddy service |
+| Networks | Coolify compose files define **no** custom networks (required for Traefik) |
+| FUSE | Server needs `/dev/fuse`. The rclone services use `cap_add: SYS_ADMIN`, `devices: [/dev/fuse]`, and `apparmor:unconfined` |
+| Raw mode | If Coolify strips devices/capabilities and mounts fail, enable **Raw Compose Deployment** |
+| Disk | Still a mount, not a sync. Lower `VFS_CACHE_MAX_SIZE` on small VPS disks |
+| Optional libs | Podcasts/ebooks mounts are included; delete those services from the compose if unused |
 
 ## Podman
 
