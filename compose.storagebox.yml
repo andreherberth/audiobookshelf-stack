@@ -1,0 +1,84 @@
+# Storage Box (SFTP) overlay for the rclone sidecar stack.
+# Requires SSH support enabled on the Storage Box in Hetzner Console.
+#
+# Usage:
+#   docker compose -f compose.yml -f compose.storagebox.yml up -d
+#   docker compose -f compose.core.yml -f compose.storagebox.yml up -d
+#   docker compose -f compose.core.yml -f compose.storagebox.yml -f compose.caddy.yml up -d
+#   docker compose -f compose.yml -f compose.storagebox.yml --profile podcasts --profile ebooks up -d
+#
+# Set STORAGEBOX_* in .env (see .env.example). STORAGEBOX_PASS must be the
+# rclone-obscured password: ./scripts/obscure-password.sh 'your-password'
+
+services:
+  rclone:
+    environment: !override
+      RCLONE_CONFIG_HETZNER_TYPE: sftp
+      RCLONE_CONFIG_HETZNER_HOST: ${STORAGEBOX_HOST}
+      RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER}
+      RCLONE_CONFIG_HETZNER_PASS: ${STORAGEBOX_PASS:-}
+      RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
+      RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
+      RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
+      RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
+    command: !override
+      - mount
+      - hetzner:${STORAGEBOX_PATH:-}audiobooks
+      - /mnt/audiobooks
+      - --allow-other
+      - --vfs-cache-mode
+      - full
+      - --cache-dir
+      - /cache
+      - --dir-cache-time
+      - 72h
+      - --checkers
+      - "4"
+
+  rclone-podcasts:
+    environment: !override
+      RCLONE_CONFIG_HETZNER_TYPE: sftp
+      RCLONE_CONFIG_HETZNER_HOST: ${STORAGEBOX_HOST}
+      RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER}
+      RCLONE_CONFIG_HETZNER_PASS: ${STORAGEBOX_PASS:-}
+      RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
+      RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
+      RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
+      RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
+    command: !override
+      - mount
+      - hetzner:${STORAGEBOX_PATH:-}podcasts
+      - /mnt/podcasts
+      - --allow-other
+      - --vfs-cache-mode
+      - full
+      - --cache-dir
+      - /cache
+      - --dir-cache-time
+      - 72h
+      - --checkers
+      - "4"
+
+  rclone-ebooks:
+    environment: !override
+      RCLONE_CONFIG_HETZNER_TYPE: sftp
+      RCLONE_CONFIG_HETZNER_HOST: ${STORAGEBOX_HOST}
+      RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER}
+      RCLONE_CONFIG_HETZNER_PASS: ${STORAGEBOX_PASS:-}
+      RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
+      RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
+      RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
+      RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
+    command: !override
+      - mount
+      - hetzner:${STORAGEBOX_PATH:-}ebooks
+      - /mnt/ebooks
+      - --allow-other
+      - --vfs-cache-mode
+      - full
+      - --cache-dir
+      - /cache
+      - --dir-cache-time
+      - 72h
+      - --checkers
+      - "4"

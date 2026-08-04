@@ -84,6 +84,48 @@ services:
     networks:
       - web
 
+  rclone-ebooks:
+    profiles:
+      - ebooks
+    image: rclone/rclone:latest
+    container_name: audiobookshelf-rclone-ebooks
+    restart: unless-stopped
+    environment:
+      RCLONE_CONFIG_HETZNER_TYPE: s3
+      RCLONE_CONFIG_HETZNER_PROVIDER: Hetzner
+      RCLONE_CONFIG_HETZNER_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      RCLONE_CONFIG_HETZNER_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+      RCLONE_CONFIG_HETZNER_ENDPOINT: ${S3_ENDPOINT}
+      RCLONE_CONFIG_HETZNER_REGION: ${S3_REGION}
+    command:
+      - mount
+      - hetzner:${S3_BUCKET}/ebooks
+      - /mnt/ebooks
+      - --allow-other
+      - --vfs-cache-mode
+      - full
+      - --cache-dir
+      - /cache
+      - --dir-cache-time
+      - 72h
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    security_opt:
+      - apparmor:unconfined
+    volumes:
+      - rclone_cache_ebooks:/cache
+      - media_ebooks:/mnt/ebooks:shared
+    healthcheck:
+      test: ["CMD", "mountpoint", "/mnt/ebooks"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - web
+
   audiobookshelf:
     image: ghcr.io/advplyr/audiobookshelf:latest
     container_name: audiobookshelf
@@ -98,6 +140,7 @@ services:
       - ./data/metadata:/metadata
       - media_audiobooks:/audiobooks:ro
       - media_podcasts:/podcasts:ro
+      - media_ebooks:/ebooks:ro
     networks:
       - web
 
@@ -123,8 +166,10 @@ services:
 volumes:
   rclone_cache:
   rclone_cache_podcasts:
+  rclone_cache_ebooks:
   media_audiobooks:
   media_podcasts:
+  media_ebooks:
   caddy_data:
   caddy_config:
 
