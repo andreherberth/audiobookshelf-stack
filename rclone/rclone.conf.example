@@ -1,3 +1,7 @@
+# Hetzner Object Storage (S3) — default for the rclone volume plugin.
+# Copy to /var/lib/docker-plugins/rclone/config/rclone.conf and edit.
+# Set RCLONE_REMOTE=hetzner:YOUR_BUCKET in .env
+
 [hetzner]
 type = s3
 provider = Hetzner
@@ -6,3 +10,20 @@ secret_access_key = YOUR_SECRET_KEY
 endpoint = fsn1.your-objectstorage.com
 region = fsn1
 acl = private
+
+# Hetzner Storage Box (SFTP) — alternative backend.
+# Enable SSH support in Hetzner Console. Obscure the password with:
+#   ./scripts/obscure-password.sh 'your-password'
+# Set RCLONE_REMOTE=storagebox: in .env (or storagebox:media for a subfolder).
+# Prefer key_file over pass when possible.
+#
+# [storagebox]
+# type = sftp
+# host = uXXXXX.your-storagebox.de
+# user = uXXXXX
+# port = 23
+# pass = OBSCURED_PASSWORD
+# shell_type = unix
+# md5sum_command = md5 -r
+# sha1sum_command = sha1 -r
+# # key_file = /config/storagebox_id_ed25519

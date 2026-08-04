@@ -1,5 +1,8 @@
 # Quick deploy: rclone volume plugin + Audiobookshelf + Caddy.
 # Requires: docker plugin install + host rclone.conf (see README).
+#
+# Object Storage: RCLONE_REMOTE=hetzner:${S3_BUCKET}
+# Storage Box:    RCLONE_REMOTE=storagebox:  (configure [storagebox] in rclone.conf)
 
 services:
   audiobookshelf:
@@ -21,6 +24,11 @@ services:
         target: /podcasts
         volume:
           subpath: podcasts
+      - type: volume
+        source: s3_media
+        target: /ebooks
+        volume:
+          subpath: ebooks
     networks:
       - web
 
@@ -47,9 +55,11 @@ volumes:
   s3_media:
     driver: rclone
     driver_opts:
-      remote: "hetzner:${S3_BUCKET}"
+      remote: "${RCLONE_REMOTE:-hetzner:${S3_BUCKET}}"
       allow_other: "true"
-      vfs_cache_mode: full
+      vfs_cache_mode: "${VFS_CACHE_MODE:-full}"
+      vfs_cache_max_size: "${VFS_CACHE_MAX_SIZE:-2G}"
+      vfs_cache_max_age: "${VFS_CACHE_MAX_AGE:-72h}"
       no_modtime: "true"
       poll_interval: 15s
   caddy_data:

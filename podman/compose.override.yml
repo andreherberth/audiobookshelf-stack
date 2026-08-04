@@ -1,5 +1,6 @@
 # Podman overrides — merge with any sidecar compose file:
 #   podman compose -f compose.yml -f podman/compose.override.yml up -d
+#   podman compose -f compose.yml -f compose.storagebox.yml -f podman/compose.override.yml up -d
 
 services:
   rclone:
@@ -14,6 +15,12 @@ services:
       - rclone_cache_podcasts:/cache:Z
       - media_podcasts:/mnt/podcasts:Z
 
+  rclone-ebooks:
+    userns_mode: keep-id
+    volumes:
+      - rclone_cache_ebooks:/cache:Z
+      - media_ebooks:/mnt/ebooks:Z
+
   audiobookshelf:
     userns_mode: keep-id
     volumes:
@@ -21,6 +28,7 @@ services:
       - ./data/metadata:/metadata:Z
       - media_audiobooks:/audiobooks:Z
       - media_podcasts:/podcasts:Z
+      - media_ebooks:/ebooks:Z
 
   caddy:
     userns_mode: keep-id
