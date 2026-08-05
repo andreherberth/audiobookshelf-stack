@@ -198,7 +198,7 @@ Also confirm: if `/audiobooks` has files but rclone `/mnt/audiobooks` is empty, 
 | Password | Coolify Storage Box compose expects a **plain** `STORAGEBOX_PASS` |
 | Paths | Default remote prefix `media/` + dirs `audiobooks` / `podcast` / `ebooks` (override via env) |
 | Leftover dirs | If an older deploy created `fuse.conf`/`entrypoint.sh` as directories under the app path, delete them before redeploying |
-| Empty / no sync | ABS writing only to VPS disk means FUSE is not shared — run `make-rshared` / redeploy; clear local `mnt/*` shadow files |
+| Empty / no sync | ABS `/audiobooks` has files but rclone `/mnt/audiobooks` empty ⇒ local VPS shadow. `mount --make-rshared "$(findmnt -n -o TARGET -T /data/coolify)"`, delete `…/mnt/*`, redeploy |
 | Raw mode | If Coolify strips devices/capabilities and mounts still fail, enable **Raw Compose Deployment** |
 | Disk | Still a mount, not a sync. Lower `VFS_CACHE_MAX_SIZE` on small VPS disks |
 | Logs | Check `rclone` logs for the mounted remote path (`hetzner:media/audiobooks` etc.) |
