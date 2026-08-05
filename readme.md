@@ -152,7 +152,12 @@ Yes — use the Coolify-specific compose files. Coolify already provides the rev
    - `/compose.coolify.storagebox.yml` — Hetzner Storage Box (SFTP mount)
 3. Fill environment variables in the Coolify UI:
    - Object Storage: `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_ENDPOINT`, `S3_BUCKET`, …
-   - Storage Box: `STORAGEBOX_HOST`, `STORAGEBOX_USER`, **`STORAGEBOX_PASS` as the plain password** (the Coolify entrypoint runs `rclone obscure` for you)
+   - Storage Box: `STORAGEBOX_HOST`, `STORAGEBOX_USER`, **`STORAGEBOX_PASS` as the plain password**
+   - For a `media/audiobooks` layout on the box:
+     - `STORAGEBOX_PATH=media/`
+     - `STORAGEBOX_AUDIOBOOKS_DIR=audiobooks`
+     - `STORAGEBOX_PODCASTS_DIR=podcast` (or `podcasts` if that is the folder name)
+     - `STORAGEBOX_EBOOKS_DIR=ebooks`
    - Optional: `VFS_CACHE_MAX_SIZE` (default `2G`)
 4. Assign your domain to the **audiobookshelf** service (listens on container port `80`).
 5. Deploy.
@@ -165,21 +170,35 @@ Yes — use the Coolify-specific compose files. Coolify already provides the rev
 
 Create those folders on the remote before the first scan. Storage Box: enable **SSH support** (port `23`).
 
+If uploads in ABS never appear on the Storage Box (or remote files never appear in ABS), the FUSE mount is not shared into ABS — ABS is using a local empty directory on the VPS. Redeploy (the `fuse-share` service runs `mount --make-rshared`), or once on the host:
+
+```bash
+sudo mount --make-rshared /data/coolify
+# optional: clear leftover local shadow files from earlier deploys
+sudo rm -rf /data/coolify/applications/<uuid>/mnt/audiobooks/* \
+            /data/coolify/applications/<uuid>/mnt/podcasts/* \
+            /data/coolify/applications/<uuid>/mnt/ebooks/*
+```
+
+Then redeploy and rescan the library.
+
 ### Coolify notes
 
 | Topic | Detail |
 |-------|--------|
 | Proxy | Use Coolify's proxy — do not run the stack's Caddy service |
 | Networks | Coolify compose files define **no** custom networks (required for Traefik) |
-| Media mounts | Bind mounts under `./mnt/media` with `rshared` propagation (named volumes cannot use `:shared`) |
+| Media mounts | Bind mounts under `./mnt/{audiobooks,podcasts,ebooks}` with `rshared` |
+| FUSE share | `fuse-share` init runs `mount --make-rshared` on `/data/coolify` so ABS sees rclone |
 | FUSE | `privileged: true`, `/dev/fuse`; `user_allow_other` written at container start (no fuse.conf bind) |
 | Healthcheck | Uses `/proc/mounts` (rclone image may not include `mountpoint`) |
 | Password | Coolify Storage Box compose expects a **plain** `STORAGEBOX_PASS` |
+| Paths | Default remote prefix `media/` + dirs `audiobooks` / `podcast` / `ebooks` (override via env) |
 | Leftover dirs | If an older deploy created `fuse.conf`/`entrypoint.sh` as directories under the app path, delete them before redeploying |
-| Empty libraries | If ABS cannot see files, on the Coolify host run `sudo mount --make-rshared /data/coolify`, then redeploy |
+| Empty / no sync | ABS writing only to VPS disk means FUSE is not shared — run `make-rshared` / redeploy; clear local `mnt/*` shadow files |
 | Raw mode | If Coolify strips devices/capabilities and mounts still fail, enable **Raw Compose Deployment** |
 | Disk | Still a mount, not a sync. Lower `VFS_CACHE_MAX_SIZE` on small VPS disks |
-| Logs | If deploy fails on rclone health, check the `rclone` service logs in Coolify for SFTP/FUSE errors |
+| Logs | Check `rclone` logs for the mounted remote path (`hetzner:media/audiobooks` etc.) |
 
 ## Podman
 
@@ -266,7 +285,10 @@ labels:
 | `STORAGEBOX_USER` | Storage Box username (or sub-account) |
 | `STORAGEBOX_PASS` | **rclone-obscured** password (`./scripts/obscure-password.sh`) |
 | `STORAGEBOX_PORT` | SSH/SFTP port (default `23`) |
-| `STORAGEBOX_PATH` | Optional prefix on the box, with trailing slash (e.g. `media/`) |
+| `STORAGEBOX_PATH` | Prefix on the box with trailing slash (Coolify default `media/`) |
+| `STORAGEBOX_AUDIOBOOKS_DIR` | Remote folder name for books (default `audiobooks`) |
+| `STORAGEBOX_PODCASTS_DIR` | Remote folder name for podcasts (Coolify default `podcast`) |
+| `STORAGEBOX_EBOOKS_DIR` | Remote folder name for ebooks (default `ebooks`) |
 | `RCLONE_REMOTE` | Plugin volume remote (`hetzner:bucket` or `storagebox:`) |
 | `VFS_CACHE_MODE` | rclone VFS mode (default `full` — best for ABS seeking) |
 | `VFS_CACHE_MAX_SIZE` | Max local cache per mount (default `2G`) — keep this small on tiny VPS disks |
