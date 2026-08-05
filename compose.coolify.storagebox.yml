@@ -1,35 +1,32 @@
 # Coolify + Storage Box (SFTP FUSE) + Audiobookshelf
 #
-# WHY HOST MOUNTS: mounting FUSE only inside the rclone container often leaves
-# Audiobookshelf on a local VPS bind (uploads appear in ABS, never on the box).
-# These services mount onto the Coolify host path via nsenter so ABS binds see
-# the same FUSE filesystem.
+# Host-namespace FUSE (nsenter) so ABS binds see Storage Box — not a local
+# VPS folder. Requires privileged + pid:host + /dev/fuse.
 #
-# Required env (Coolify UI):
+# Coolify Advanced: enable **Raw Compose Deployment** (needed for FUSE).
+# Domains UI is limited in Raw mode — set AUDIOBOOKSHELF_HOST (hostname only)
+# for Traefik labels, e.g. books.example.com or xxx.sslip.io.
+#
+# Required env:
 #   STORAGEBOX_HOST, STORAGEBOX_USER, STORAGEBOX_PASS (plain password)
 #   HOST_MNT_BASE=/data/coolify/applications/<uuid>/mnt
+#   AUDIOBOOKSHELF_HOST=your.domain.or.sslip.io
 # Optional:
 #   STORAGEBOX_PATH=media/
 #   STORAGEBOX_AUDIOBOOKS_DIR=audiobooks
 #   STORAGEBOX_PODCASTS_DIR=podcast
 #   STORAGEBOX_EBOOKS_DIR=ebooks
-#   SERVICE_URL_AUDIOBOOKSHELF — Coolify Domains / temporary URL
 #
-# Volume sources stay literal ./mnt/... (Coolify rejects ${...} in sources).
-# HOST_MNT_BASE is used only in entrypoints (allowed).
-#
-# Leave "Raw Compose Deployment" OFF for Domains UI. Enable only if /dev/fuse
-# is missing or fusermount is denied.
+# Volume sources are literal ./mnt/... (Coolify rejects ${...} in sources).
 #
 # One-time on the Coolify host:
 #   sudo mount --make-rshared "$(findmnt -n -o TARGET -T /data/coolify)"
 #   sudo find /data/coolify/applications/<uuid>/mnt -mindepth 1 -delete
 #   grep -q user_allow_other /etc/fuse.conf || echo user_allow_other | sudo tee -a /etc/fuse.conf
-#
-# ABS libraries: /audiobooks /podcasts /ebooks
 
 x-rclone-common: &rclone-common
-  image: rclone/rclone:latest
+  # alpine (not rclone/rclone) — reliable apk, fewer Docker Hub pulls
+  image: alpine:3.20
   restart: unless-stopped
   privileged: true
   pid: host
@@ -46,7 +43,6 @@ x-rclone-common: &rclone-common
     RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER:?}
     STORAGEBOX_PASS: ${STORAGEBOX_PASS:?}
     STORAGEBOX_PATH: ${STORAGEBOX_PATH:-media/}
-    # Absolute Coolify app mnt path — required for host-namespace FUSE
     HOST_MNT_BASE: ${HOST_MNT_BASE:?set to /data/coolify/applications/<uuid>/mnt}
     RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
     RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
@@ -59,21 +55,39 @@ x-rclone-common: &rclone-common
     VFS_DIR_CACHE_TIME: ${VFS_DIR_CACHE_TIME:-72h}
 
 x-rclone-health: &rclone-health
-  interval: 10s
-  timeout: 8s
-  retries: 30
-  start_period: 120s
+  interval: 15s
+  timeout: 10s
+  retries: 40
+  start_period: 180s
 
+# Install rclone once per container, mount onto the Coolify host path.
 x-rclone-host-mount: &rclone-host-mount
   - |
     set -eu
-    echo "user_allow_other" > /etc/fuse.conf
+    echo "rclone: starting host-mount setup (subdir=$$RCLONE_HOST_SUBDIR)"
     if [ ! -e /dev/fuse ]; then
       echo "rclone: FATAL /dev/fuse missing — enable Coolify Raw Compose Deployment"
       exit 1
     fi
-    apk add --no-cache util-linux fuse3 >/dev/null
-    nsenter -t 1 -m -- sh -c 'grep -q "^user_allow_other" /etc/fuse.conf 2>/dev/null || echo user_allow_other >> /etc/fuse.conf'
+    apk add --no-cache util-linux fuse3 curl unzip ca-certificates >/dev/null
+    echo "user_allow_other" > /etc/fuse.conf
+    nsenter -t 1 -m -- sh -c 'grep -q "^user_allow_other" /etc/fuse.conf 2>/dev/null || echo user_allow_other >> /etc/fuse.conf' \
+      || echo "rclone: WARNING could not update host fuse.conf"
+
+    arch="$$(uname -m)"
+    case "$$arch" in
+      x86_64) rarch=amd64 ;;
+      aarch64|arm64) rarch=arm64 ;;
+      armv7l) rarch=arm-v7 ;;
+      *) rarch=amd64 ;;
+    esac
+    if [ ! -x /usr/local/bin/rclone ]; then
+      echo "rclone: downloading rclone linux-$$rarch"
+      curl -fsSL "https://downloads.rclone.org/rclone-current-linux-$${rarch}.zip" -o /tmp/rclone.zip
+      unzip -oq /tmp/rclone.zip -d /tmp
+      mv /tmp/rclone-*/rclone /usr/local/bin/rclone
+      chmod +x /usr/local/bin/rclone
+    fi
 
     export RCLONE_CONFIG_HETZNER_PASS="$$(rclone obscure "$$STORAGEBOX_PASS")"
     remote="hetzner:$${STORAGEBOX_PATH}$${RCLONE_REMOTE_SUBDIR}"
@@ -82,9 +96,9 @@ x-rclone-host-mount: &rclone-host-mount
     cache_dir="$${app_dir}/rclone-cache/$${RCLONE_HOST_SUBDIR}"
     bin_dir="$${app_dir}/bin"
     my_pid=$$
-    rclone_src="$$(command -v rclone)"
 
-    echo "rclone: remote=$$remote host_path=$$host_path"
+    echo "rclone: remote=$$remote"
+    echo "rclone: host_path=$$host_path"
 
     set +e
     probe_out="$$(rclone lsf "$$remote" --max-depth 1 2>&1)"
@@ -92,29 +106,29 @@ x-rclone-host-mount: &rclone-host-mount
     set -e
     echo "$$probe_out" | head -n 40
     if [ "$$probe_rc" -ne 0 ]; then
-      echo "rclone: FATAL cannot access $$remote — check STORAGEBOX_* credentials/paths"
+      echo "rclone: FATAL cannot access $$remote — check STORAGEBOX_* and remote folder names"
       exit 1
     fi
     rclone mkdir "$$remote" 2>/dev/null || true
 
     nsenter -t 1 -m -- mkdir -p "$$host_path" "$$cache_dir" "$$bin_dir"
-    nsenter -t 1 -m -- cp "/proc/$${my_pid}/root$${rclone_src}" "$${bin_dir}/rclone"
+    nsenter -t 1 -m -- cp "/proc/$${my_pid}/root/usr/local/bin/rclone" "$${bin_dir}/rclone"
     nsenter -t 1 -m -- chmod +x "$${bin_dir}/rclone"
 
-    # Drop stale host mount, then clear VPS-only shadow files (not on Storage Box)
     if nsenter -t 1 -m -- findmnt -M "$$host_path" >/dev/null 2>&1; then
       echo "rclone: unmounting stale FUSE at $$host_path"
       nsenter -t 1 -m -- fusermount3 -uz "$$host_path" 2>/dev/null \
+        || nsenter -t 1 -m -- fusermount -uz "$$host_path" 2>/dev/null \
         || nsenter -t 1 -m -- umount -l "$$host_path" 2>/dev/null \
         || true
+      sleep 1
     fi
     if [ -n "$$(nsenter -t 1 -m -- ls -A "$$host_path" 2>/dev/null || true)" ]; then
       echo "rclone: clearing local shadow files under $$host_path"
       nsenter -t 1 -m -- find "$$host_path" -mindepth 1 -delete
     fi
 
-    echo "rclone: HOST mounting $$remote -> $$host_path (visible to ABS binds)"
-    # -m: host mounts; -n: host network for SFTP
+    echo "rclone: HOST mounting $$remote -> $$host_path"
     exec nsenter -t 1 -m -n -- "$${bin_dir}/rclone" mount "$$remote" "$$host_path" \
       --allow-other \
       --allow-non-empty \
@@ -157,16 +171,15 @@ services:
       <<: *rclone-env
       RCLONE_REMOTE_SUBDIR: ${STORAGEBOX_AUDIOBOOKS_DIR:-audiobooks}
       RCLONE_HOST_SUBDIR: audiobooks
-    volumes:
-      - rclone_cache:/cache
     entrypoint: ["sh", "-c"]
     command: *rclone-host-mount
     healthcheck:
       <<: *rclone-health
+      # pid:host → /proc/1/mounts is the host; no nsenter needed in the probe
       test:
         [
           "CMD-SHELL",
-          "nsenter -t 1 -m -- findmnt -M \"$$HOST_MNT_BASE/audiobooks\" >/dev/null",
+          "grep -F \"$$HOST_MNT_BASE/audiobooks\" /proc/1/mounts",
         ]
 
   rclone-podcasts:
@@ -178,8 +191,6 @@ services:
       <<: *rclone-env
       RCLONE_REMOTE_SUBDIR: ${STORAGEBOX_PODCASTS_DIR:-podcast}
       RCLONE_HOST_SUBDIR: podcasts
-    volumes:
-      - rclone_cache_podcasts:/cache
     entrypoint: ["sh", "-c"]
     command: *rclone-host-mount
     healthcheck:
@@ -187,7 +198,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "nsenter -t 1 -m -- findmnt -M \"$$HOST_MNT_BASE/podcasts\" >/dev/null",
+          "grep -F \"$$HOST_MNT_BASE/podcasts\" /proc/1/mounts",
         ]
 
   rclone-ebooks:
@@ -199,8 +210,6 @@ services:
       <<: *rclone-env
       RCLONE_REMOTE_SUBDIR: ${STORAGEBOX_EBOOKS_DIR:-ebooks}
       RCLONE_HOST_SUBDIR: ebooks
-    volumes:
-      - rclone_cache_ebooks:/cache
     entrypoint: ["sh", "-c"]
     command: *rclone-host-mount
     healthcheck:
@@ -208,30 +217,34 @@ services:
       test:
         [
           "CMD-SHELL",
-          "nsenter -t 1 -m -- findmnt -M \"$$HOST_MNT_BASE/ebooks\" >/dev/null",
+          "grep -F \"$$HOST_MNT_BASE/ebooks\" /proc/1/mounts",
         ]
 
   audiobookshelf:
     image: ghcr.io/advplyr/audiobookshelf:latest
     restart: unless-stopped
+    # Only wait for audiobooks mount — podcasts/ebooks must not block deploy
     depends_on:
       rclone:
         condition: service_healthy
-      rclone-podcasts:
-        condition: service_healthy
-      rclone-ebooks:
-        condition: service_healthy
-    # Coolify Domains: assign / Generate Domain on this service.
-    # Keep Raw Compose OFF unless FUSE is blocked.
     environment:
       TZ: ${TZ:-UTC}
       SERVICE_URL_AUDIOBOOKSHELF: ${SERVICE_URL_AUDIOBOOKSHELF:-}
     expose:
       - "80"
+    # Raw Compose: Coolify Domains UI may be hidden — Traefik via AUDIOBOOKSHELF_HOST
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.audiobookshelf.loadbalancer.server.port=80
+      - traefik.http.routers.audiobookshelf-http.rule=Host(`${AUDIOBOOKSHELF_HOST:?set hostname e.g. books.example.com}`)
+      - traefik.http.routers.audiobookshelf-http.entrypoints=http
+      - traefik.http.routers.audiobookshelf-https.rule=Host(`${AUDIOBOOKSHELF_HOST:?}`)
+      - traefik.http.routers.audiobookshelf-https.entrypoints=https
+      - traefik.http.routers.audiobookshelf-https.tls=true
+      - traefik.http.routers.audiobookshelf-https.tls.certresolver=letsencrypt
     volumes:
       - abs_config:/config
       - abs_metadata:/metadata
-      # Bind AFTER host FUSE is up (depends_on healthy) so ABS sees Storage Box
       - type: bind
         source: ./mnt/audiobooks
         target: /audiobooks
@@ -249,8 +262,5 @@ services:
           propagation: rshared
 
 volumes:
-  rclone_cache:
-  rclone_cache_podcasts:
-  rclone_cache_ebooks:
   abs_config:
   abs_metadata:
