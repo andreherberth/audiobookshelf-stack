@@ -68,12 +68,11 @@ x-rclone-mount: &rclone-mount
     app_dir="$$(dirname "$$HOST_MNT_BASE")"
     cache_dir="$${app_dir}/rclone-cache/$${RCLONE_HOST_SUBDIR}"
     bin_dir="$${app_dir}/bin"
-    # $$$$ -> shell $$ (PID); $$ alone becomes literal "$" after compose interpolation
-    my_pid=$$$$
     rclone_src="$$(command -v rclone)"
 
     echo "rclone: remote=$$remote"
     echo "rclone: host_path=$$host_path"
+    echo "rclone: rclone_src=$$rclone_src"
 
     while true; do
       echo "rclone: probing $$remote"
@@ -85,13 +84,12 @@ x-rclone-mount: &rclone-mount
       rclone mkdir "$$remote" 2>/dev/null || true
 
       nsenter -t 1 -m -- mkdir -p "$$host_path" "$$cache_dir" "$$bin_dir"
-      rclone_host_src="/proc/$$my_pid/root$$rclone_src"
-      if ! nsenter -t 1 -m -- test -f "$$rclone_host_src"; then
-        echo "rclone: FATAL cannot read $$rclone_host_src (pid=$$my_pid src=$$rclone_src)"
+      # Copy rclone to host without /proc/$$ (Coolify strips compose $$ escaping)
+      if ! cat "$$rclone_src" | nsenter -t 1 -m -- tee "$$bin_dir/rclone" > /dev/null; then
+        echo "rclone: FATAL failed to copy rclone binary to $$bin_dir/rclone"
         sleep 20
         continue
       fi
-      nsenter -t 1 -m -- cp "$$rclone_host_src" "$$bin_dir/rclone"
       nsenter -t 1 -m -- chmod +x "$$bin_dir/rclone"
 
       if nsenter -t 1 -m -- findmnt -M "$$host_path" >/dev/null 2>&1; then
