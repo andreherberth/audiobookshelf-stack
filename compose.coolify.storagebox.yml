@@ -68,7 +68,8 @@ x-rclone-mount: &rclone-mount
     app_dir="$$(dirname "$$HOST_MNT_BASE")"
     cache_dir="$${app_dir}/rclone-cache/$${RCLONE_HOST_SUBDIR}"
     bin_dir="$${app_dir}/bin"
-    my_pid=$$
+    # $$$$ -> shell $$ (PID); $$ alone becomes literal "$" after compose interpolation
+    my_pid=$$$$
     rclone_src="$$(command -v rclone)"
 
     echo "rclone: remote=$$remote"
@@ -84,8 +85,14 @@ x-rclone-mount: &rclone-mount
       rclone mkdir "$$remote" 2>/dev/null || true
 
       nsenter -t 1 -m -- mkdir -p "$$host_path" "$$cache_dir" "$$bin_dir"
-      nsenter -t 1 -m -- cp "/proc/$${my_pid}/root$${rclone_src}" "$${bin_dir}/rclone"
-      nsenter -t 1 -m -- chmod +x "$${bin_dir}/rclone"
+      rclone_host_src="/proc/$$my_pid/root$$rclone_src"
+      if ! nsenter -t 1 -m -- test -f "$$rclone_host_src"; then
+        echo "rclone: FATAL cannot read $$rclone_host_src (pid=$$my_pid src=$$rclone_src)"
+        sleep 20
+        continue
+      fi
+      nsenter -t 1 -m -- cp "$$rclone_host_src" "$$bin_dir/rclone"
+      nsenter -t 1 -m -- chmod +x "$$bin_dir/rclone"
 
       if nsenter -t 1 -m -- findmnt -M "$$host_path" >/dev/null 2>&1; then
         echo "rclone: unmounting stale FUSE at $$host_path"
@@ -101,7 +108,7 @@ x-rclone-mount: &rclone-mount
 
       echo "rclone: HOST mounting $$remote -> $$host_path"
       # nsenter -m: host mount namespace (host fusermount, not container)
-      exec nsenter -t 1 -m -- "$${bin_dir}/rclone" mount "$$remote" "$$host_path" \
+      exec nsenter -t 1 -m -- "$$bin_dir/rclone" mount "$$remote" "$$host_path" \
         --allow-other \
         --allow-non-empty \
         --vfs-cache-mode "$$VFS_CACHE_MODE" \
