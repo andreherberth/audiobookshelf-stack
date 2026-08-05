@@ -18,10 +18,11 @@
 #
 # Volume sources must be literal (Coolify rejects ${...} in sources).
 #
-# One-time on the Coolify host:
+# One-time on the Coolify host (fuse-share also applies AppArmor + fuse3 on deploy):
 #   sudo mount --make-rshared "$(findmnt -n -o TARGET -T /data/coolify)"
 #   sudo find /data/coolify/applications/<uuid>/mnt -mindepth 1 -delete
 #   grep -q user_allow_other /etc/fuse.conf || echo user_allow_other | sudo tee -a /etc/fuse.conf
+# Ubuntu 25.04+: fusermount3 AppArmor needs /data/coolify/**/ + dac_override (see fuse-share).
 
 x-rclone-common: &rclone-common
   image: rclone/rclone:1.69.1
@@ -198,6 +199,25 @@ services:
           fi
           ls -l /dev/fuse 2>/dev/null || echo "fuse-share: WARNING /dev/fuse missing on host"
         '
+        nsenter -t 1 -m -- sh -c 'if [ -f /etc/apparmor.d/fusermount3 ]; then
+          mkdir -p /etc/apparmor.d/local
+          printf "%s\n" \
+            "# audiobookshelf-stack fuse-share" \
+            "capability dac_override," \
+            "mount fstype=@{fuse_types} options=(nosuid,nodev,rw) -> /data/coolify/**/," \
+            "mount fstype=@{fuse_types} options=(nosuid,nodev,ro) -> /data/coolify/**/," \
+            "umount /data/coolify/**/," \
+            > /etc/apparmor.d/local/fusermount3
+          if command -v apparmor_parser >/dev/null 2>&1; then
+            apparmor_parser -r /etc/apparmor.d/fusermount3 \
+              && echo "fuse-share: apparmor fusermount3 reloaded" \
+              || echo "fuse-share: WARNING apparmor reload failed"
+          else
+            echo "fuse-share: WARNING apparmor_parser missing"
+          fi
+        else
+          echo "fuse-share: no host fusermount3 profile — skip apparmor local"
+        fi'
         echo "fuse-share: done"
 
   rclone:
@@ -294,16 +314,19 @@ services:
         source: ./mnt/audiobooks
         target: /audiobooks
         bind:
+          create_host_path: false
           propagation: rshared
       - type: bind
         source: ./mnt/podcasts
         target: /podcasts
         bind:
+          create_host_path: false
           propagation: rshared
       - type: bind
         source: ./mnt/ebooks
         target: /ebooks
         bind:
+          create_host_path: false
           propagation: rshared
 
 volumes:
