@@ -200,7 +200,7 @@ STORAGEBOX_PODCASTS_DIR=podcast
 STORAGEBOX_EBOOKS_DIR=ebooks
 ```
 
-rclone mounts FUSE at `$HOST_MNT_BASE/<lib>` on the shared `/data/coolify` bind (rshared) so ABS sees Storage Box. Deploy no longer waits on rclone healthy (so logs stay readable if mount retries).
+rclone mounts Storage Box on the **host** via `nsenter` (in-container `fusermount` fails on Coolify paths). Enable **Raw Compose Deployment**. ABS binds `./mnt/…` after audiobooks mount is healthy.
 
 If rclone logs `fusermount3: Permission denied` or `/dev/fuse missing`, confirm **Raw Compose Deployment** is enabled.
 
