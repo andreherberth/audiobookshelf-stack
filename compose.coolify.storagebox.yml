@@ -1,31 +1,52 @@
-# Coolify + Storage Box: host-visible FUSE mounts for Audiobookshelf.
+# Coolify + Storage Box (SFTP FUSE) + Audiobookshelf
 #
-# Why previous setups failed:
-#   Mounting FUSE on a separate container path (./mnt/audiobooks) often does NOT
-#   show up in ABS — Coolify/Docker keep that bind private. ABS then writes to a
-#   local VPS folder while rclone talks to the Storage Box.
+# Critical Coolify setting: enable "Raw Compose Deployment" if FUSE still
+# gets Permission denied (Coolify may strip privileged/devices/security_opt).
 #
-# Fix:
-#   1) make-rshared on the real mountpoint covering /data/coolify
-#   2) bind /data/coolify:rshared into rclone
-#   3) rclone mount *under* that bind (…/applications/<uuid>/mnt/audiobooks)
-#   4) ABS binds the same host dirs — sees Storage Box read+write
-#
-# Coolify env:
-#   STORAGEBOX_HOST, STORAGEBOX_USER, STORAGEBOX_PASS (plain)
+# Env:
+#   STORAGEBOX_HOST, STORAGEBOX_USER, STORAGEBOX_PASS (plain password)
 #   STORAGEBOX_PATH=media/
 #   STORAGEBOX_AUDIOBOOKS_DIR=audiobooks
 #   STORAGEBOX_PODCASTS_DIR=podcast
 #   STORAGEBOX_EBOOKS_DIR=ebooks
-#   Optional: HOST_MNT_BASE=/data/coolify/applications/<uuid>/mnt
+#   HOST_MNT_BASE=/data/coolify/applications/<uuid>/mnt   # strongly recommended
 #
-# Before first working deploy, clear local shadow files:
-#   sudo find /data/coolify/applications/<uuid>/mnt -mindepth 1 -delete
+# One-time on the Coolify host:
 #   sudo mount --make-rshared "$(findmnt -n -o TARGET -T /data/coolify)"
+#   sudo find /data/coolify/applications/<uuid>/mnt -mindepth 1 -delete
+#   echo user_allow_other | sudo tee -a /etc/fuse.conf
 #
 # ABS libraries: /audiobooks /podcasts /ebooks
 
+x-rclone-common: &rclone-common
+  image: rclone/rclone:latest
+  restart: unless-stopped
+  privileged: true
+  cap_add:
+    - SYS_ADMIN
+  devices:
+    - /dev/fuse:/dev/fuse:rwm
+  security_opt:
+    - apparmor:unconfined
+    - seccomp:unconfined
+  environment: &rclone-env
+    RCLONE_CONFIG_HETZNER_TYPE: sftp
+    RCLONE_CONFIG_HETZNER_HOST: ${STORAGEBOX_HOST:?}
+    RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER:?}
+    STORAGEBOX_PASS: ${STORAGEBOX_PASS:?}
+    STORAGEBOX_PATH: ${STORAGEBOX_PATH:-media/}
+    RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
+    RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
+    RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
+    RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
+    RCLONE_CONFIG_HETZNER_KNOWN_HOSTS_FILE: none
+    VFS_CACHE_MODE: ${VFS_CACHE_MODE:-full}
+    VFS_CACHE_MAX_SIZE: ${VFS_CACHE_MAX_SIZE:-2G}
+    VFS_CACHE_MAX_AGE: ${VFS_CACHE_MAX_AGE:-72h}
+    VFS_DIR_CACHE_TIME: ${VFS_DIR_CACHE_TIME:-72h}
+
 services:
+  # make-rshared must target a real mountpoint (often / or /data), not /data/coolify
   fuse-share:
     image: alpine:3.20
     restart: "no"
@@ -41,140 +62,132 @@ services:
           [ -e "$$probe" ] || continue
           mp="$$(nsenter -t 1 -m -- findmnt -n -o TARGET -T "$$probe" 2>/dev/null || true)"
           [ -n "$$mp" ] || continue
-          if nsenter -t 1 -m -- mount --make-rshared "$$mp"; then
-            echo "fuse-share: rshared OK -> $$mp (via $$probe)"
-          else
-            echo "fuse-share: FAILED make-rshared $$mp"
-          fi
+          nsenter -t 1 -m -- mount --make-rshared "$$mp" \
+            && echo "fuse-share: rshared OK -> $$mp" \
+            || echo "fuse-share: FAILED $$mp"
         done
+        nsenter -t 1 -m -- sh -c 'grep -q "^user_allow_other" /etc/fuse.conf 2>/dev/null || echo user_allow_other >> /etc/fuse.conf'
+        echo "fuse-share: done"
 
   rclone:
-    image: rclone/rclone:latest
-    restart: unless-stopped
-    privileged: true
+    <<: *rclone-common
     depends_on:
       fuse-share:
         condition: service_completed_successfully
     environment:
-      RCLONE_CONFIG_HETZNER_TYPE: sftp
-      RCLONE_CONFIG_HETZNER_HOST: ${STORAGEBOX_HOST:?}
-      RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER:?}
-      STORAGEBOX_PASS: ${STORAGEBOX_PASS:?}
-      STORAGEBOX_PATH: ${STORAGEBOX_PATH:-media/}
-      STORAGEBOX_AUDIOBOOKS_DIR: ${STORAGEBOX_AUDIOBOOKS_DIR:-audiobooks}
-      STORAGEBOX_PODCASTS_DIR: ${STORAGEBOX_PODCASTS_DIR:-podcast}
-      STORAGEBOX_EBOOKS_DIR: ${STORAGEBOX_EBOOKS_DIR:-ebooks}
-      HOST_MNT_BASE: ${HOST_MNT_BASE:-}
-      RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
-      RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
-      RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
-      RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
-      RCLONE_CONFIG_HETZNER_KNOWN_HOSTS_FILE: none
-      VFS_CACHE_MODE: ${VFS_CACHE_MODE:-full}
-      VFS_CACHE_MAX_SIZE: ${VFS_CACHE_MAX_SIZE:-2G}
-      VFS_CACHE_MAX_AGE: ${VFS_CACHE_MAX_AGE:-72h}
-      VFS_DIR_CACHE_TIME: ${VFS_DIR_CACHE_TIME:-72h}
-    cap_add:
-      - SYS_ADMIN
-    devices:
-      - /dev/fuse:/dev/fuse:rwm
-    security_opt:
-      - apparmor:unconfined
-    # Mount UNDER this shared bind so FUSE is visible on the Coolify host paths.
+      <<: *rclone-env
+      RCLONE_REMOTE_SUBDIR: ${STORAGEBOX_AUDIOBOOKS_DIR:-audiobooks}
+      RCLONE_MOUNT_PATH: /mnt/audiobooks
+    # Mount ONTO the bind target (not under a nested /data/coolify bind).
+    # Nested mounts under /data/coolify:/data/coolify caused: fusermount3 Permission denied
     volumes:
       - rclone_cache:/cache
-      - /data/coolify:/data/coolify:rshared
+      - ${HOST_MNT_BASE:-./mnt}/audiobooks:/mnt/audiobooks:rshared
     entrypoint: ["sh", "-c"]
     command:
       - |
         set -eu
-        apk add --no-cache util-linux >/dev/null 2>&1 || true
         echo "user_allow_other" > /etc/fuse.conf
         export RCLONE_CONFIG_HETZNER_PASS="$$(rclone obscure "$$STORAGEBOX_PASS")"
-
-        if [ -n "$$HOST_MNT_BASE" ]; then
-          BASE="$$HOST_MNT_BASE"
-        else
-          BASE="$$(find /data/coolify/applications -type d -path '*/mnt' 2>/dev/null | head -n 1 || true)"
-        fi
-        if [ -z "$$BASE" ] || [ ! -d "$$BASE" ]; then
-          echo "rclone: ERROR could not find …/mnt under /data/coolify/applications"
-          echo "rclone: set HOST_MNT_BASE=/data/coolify/applications/<uuid>/mnt"
-          ls -la /data/coolify/applications || true
+        remote="hetzner:$${STORAGEBOX_PATH}$${RCLONE_REMOTE_SUBDIR}"
+        echo "rclone: listing $$remote"
+        rclone lsf "$$remote" --max-depth 2 2>&1 | head -n 40 \
+          || echo "rclone: WARNING could not list $$remote"
+        if [ -n "$$(ls -A /mnt/audiobooks 2>/dev/null || true)" ]; then
+          echo "rclone: ERROR /mnt/audiobooks has local VPS files. On the host run:"
+          echo "  sudo find $${HOST_MNT_BASE:-/data/coolify/applications/*/mnt}/audiobooks -mindepth 1 -delete"
           exit 1
         fi
-        echo "rclone: using HOST mnt base $$BASE"
-        mkdir -p "$$BASE/audiobooks" "$$BASE/podcasts" "$$BASE/ebooks"
-
-        is_mounted() {
-          grep -q " $$1 " /proc/mounts
-        }
-
-        mount_one() {
-          subdir="$$1"
-          remote_dir="$$2"
-          target="$$BASE/$$subdir"
-          remote="hetzner:$${STORAGEBOX_PATH}$$remote_dir"
-          echo "rclone: listing $$remote"
-          rclone lsf "$$remote" --max-depth 2 2>&1 | head -n 30 \
-            || echo "rclone: WARNING empty/missing $$remote"
-          if [ -n "$$(ls -A "$$target" 2>/dev/null || true)" ] && ! is_mounted "$$target"; then
-            echo "rclone: ERROR $$target has local VPS files (not FUSE)."
-            echo "rclone: on the host run:"
-            echo "  sudo find $$target -mindepth 1 -delete"
-            exit 1
-          fi
-          echo "rclone: mounting $$remote -> $$target"
-          rclone mount "$$remote" "$$target" \
-            --allow-other \
-            --vfs-cache-mode "$$VFS_CACHE_MODE" \
-            --vfs-cache-max-size "$$VFS_CACHE_MAX_SIZE" \
-            --vfs-cache-max-age "$$VFS_CACHE_MAX_AGE" \
-            --cache-dir "/cache/$$subdir" \
-            --dir-cache-time "$$VFS_DIR_CACHE_TIME" \
-            --checkers 2 \
-            --log-level INFO &
-        }
-
-        mount_one audiobooks "$$STORAGEBOX_AUDIOBOOKS_DIR"
-        mount_one podcasts "$$STORAGEBOX_PODCASTS_DIR"
-        mount_one ebooks "$$STORAGEBOX_EBOOKS_DIR"
-
-        echo "rclone: waiting for mounts"
-        for i in $$(seq 1 90); do
-          ok=1
-          for d in audiobooks podcasts ebooks; do
-            is_mounted "$$BASE/$$d" || ok=0
-          done
-          [ "$$ok" = 1 ] && break
-          sleep 1
-        done
-        for d in audiobooks podcasts ebooks; do
-          if ! is_mounted "$$BASE/$$d"; then
-            echo "rclone: ERROR mount failed for $$BASE/$$d"
-            exit 1
-          fi
-          echo "rclone: OK $$BASE/$$d -> $$(ls "$$BASE/$$d" | wc -l) entries"
-        done
-
-        cleanup() {
-          for d in audiobooks podcasts ebooks; do
-            fusermount3 -uz "$$BASE/$$d" 2>/dev/null || fusermount -uz "$$BASE/$$d" 2>/dev/null || true
-          done
-        }
-        trap cleanup EXIT INT TERM
-        while true; do
-          for d in audiobooks podcasts ebooks; do
-            is_mounted "$$BASE/$$d" || exit 1
-          done
-          sleep 30
-        done
+        echo "rclone: mounting $$remote -> /mnt/audiobooks"
+        exec rclone mount "$$remote" /mnt/audiobooks \
+          --allow-other \
+          --vfs-cache-mode "$$VFS_CACHE_MODE" \
+          --vfs-cache-max-size "$$VFS_CACHE_MAX_SIZE" \
+          --vfs-cache-max-age "$$VFS_CACHE_MAX_AGE" \
+          --cache-dir /cache \
+          --dir-cache-time "$$VFS_DIR_CACHE_TIME" \
+          --checkers 2 \
+          --log-level INFO
     healthcheck:
-      test: ["CMD-SHELL", "grep -q 'mnt/audiobooks' /proc/mounts"]
-      interval: 15s
+      test: ["CMD-SHELL", "grep -q ' /mnt/audiobooks ' /proc/mounts"]
+      interval: 10s
       timeout: 5s
-      retries: 20
-      start_period: 120s
+      retries: 18
+      start_period: 90s
+
+  rclone-podcasts:
+    <<: *rclone-common
+    depends_on:
+      fuse-share:
+        condition: service_completed_successfully
+    environment:
+      <<: *rclone-env
+      RCLONE_REMOTE_SUBDIR: ${STORAGEBOX_PODCASTS_DIR:-podcast}
+      RCLONE_MOUNT_PATH: /mnt/podcasts
+    volumes:
+      - rclone_cache_podcasts:/cache
+      - ${HOST_MNT_BASE:-./mnt}/podcasts:/mnt/podcasts:rshared
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -eu
+        echo "user_allow_other" > /etc/fuse.conf
+        export RCLONE_CONFIG_HETZNER_PASS="$$(rclone obscure "$$STORAGEBOX_PASS")"
+        remote="hetzner:$${STORAGEBOX_PATH}$${RCLONE_REMOTE_SUBDIR}"
+        rclone mkdir "$$remote" 2>/dev/null || true
+        echo "rclone: mounting $$remote -> /mnt/podcasts"
+        exec rclone mount "$$remote" /mnt/podcasts \
+          --allow-other \
+          --vfs-cache-mode "$$VFS_CACHE_MODE" \
+          --vfs-cache-max-size "$$VFS_CACHE_MAX_SIZE" \
+          --vfs-cache-max-age "$$VFS_CACHE_MAX_AGE" \
+          --cache-dir /cache \
+          --dir-cache-time "$$VFS_DIR_CACHE_TIME" \
+          --checkers 2 \
+          --log-level INFO
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q ' /mnt/podcasts ' /proc/mounts"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 90s
+
+  rclone-ebooks:
+    <<: *rclone-common
+    depends_on:
+      fuse-share:
+        condition: service_completed_successfully
+    environment:
+      <<: *rclone-env
+      RCLONE_REMOTE_SUBDIR: ${STORAGEBOX_EBOOKS_DIR:-ebooks}
+      RCLONE_MOUNT_PATH: /mnt/ebooks
+    volumes:
+      - rclone_cache_ebooks:/cache
+      - ${HOST_MNT_BASE:-./mnt}/ebooks:/mnt/ebooks:rshared
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -eu
+        echo "user_allow_other" > /etc/fuse.conf
+        export RCLONE_CONFIG_HETZNER_PASS="$$(rclone obscure "$$STORAGEBOX_PASS")"
+        remote="hetzner:$${STORAGEBOX_PATH}$${RCLONE_REMOTE_SUBDIR}"
+        rclone mkdir "$$remote" 2>/dev/null || true
+        echo "rclone: mounting $$remote -> /mnt/ebooks"
+        exec rclone mount "$$remote" /mnt/ebooks \
+          --allow-other \
+          --vfs-cache-mode "$$VFS_CACHE_MODE" \
+          --vfs-cache-max-size "$$VFS_CACHE_MAX_SIZE" \
+          --vfs-cache-max-age "$$VFS_CACHE_MAX_AGE" \
+          --cache-dir /cache \
+          --dir-cache-time "$$VFS_DIR_CACHE_TIME" \
+          --checkers 2 \
+          --log-level INFO
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q ' /mnt/ebooks ' /proc/mounts"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 90s
 
   audiobookshelf:
     image: ghcr.io/advplyr/audiobookshelf:latest
@@ -187,21 +200,13 @@ services:
     volumes:
       - abs_config:/config
       - abs_metadata:/metadata
-      # Same host dirs rclone FUSE-mounted under /data/coolify/.../mnt/*
-      - type: bind
-        source: ./mnt/audiobooks
-        target: /audiobooks
-        is_directory: true
-      - type: bind
-        source: ./mnt/podcasts
-        target: /podcasts
-        is_directory: true
-      - type: bind
-        source: ./mnt/ebooks
-        target: /ebooks
-        is_directory: true
+      - ${HOST_MNT_BASE:-./mnt}/audiobooks:/audiobooks:rshared
+      - ${HOST_MNT_BASE:-./mnt}/podcasts:/podcasts:rshared
+      - ${HOST_MNT_BASE:-./mnt}/ebooks:/ebooks:rshared
 
 volumes:
   rclone_cache:
+  rclone_cache_podcasts:
+  rclone_cache_ebooks:
   abs_config:
   abs_metadata:

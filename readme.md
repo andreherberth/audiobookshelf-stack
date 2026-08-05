@@ -179,20 +179,25 @@ If uploads in ABS never appear on the Storage Box (or remote files never appear 
 findmnt -T /data/coolify
 sudo mount --make-rshared "$(findmnt -n -o TARGET -T /data/coolify)"
 
-# 2) delete local shadow files ABS wrote on the VPS
+# 2) allow FUSE allow_other
+grep -q user_allow_other /etc/fuse.conf 2>/dev/null || echo user_allow_other | sudo tee -a /etc/fuse.conf
+
+# 3) delete local shadow files ABS wrote on the VPS
 sudo find /data/coolify/applications/w2cqu8zgqq5hw35ol4fzkanb/mnt -mindepth 1 -delete
 ```
 
-Optional but recommended in Coolify env:
+In Coolify env set:
 ```
 HOST_MNT_BASE=/data/coolify/applications/w2cqu8zgqq5hw35ol4fzkanb/mnt
+STORAGEBOX_PATH=media/
+STORAGEBOX_AUDIOBOOKS_DIR=audiobooks
+STORAGEBOX_PODCASTS_DIR=podcast
+STORAGEBOX_EBOOKS_DIR=ebooks
 ```
 
-Then redeploy. rclone logs should show mounts like:
-`/data/coolify/applications/…/mnt/audiobooks`
-and ABS `/audiobooks` must list the **same** files as the Storage Box.
+If rclone logs `fusermount3: Permission denied`, enable **Raw Compose Deployment** in Coolify (Advanced) so `privileged` / `/dev/fuse` / `security_opt` are not stripped, then redeploy.
 
-If rclone exits with “has local VPS files”, step 2 was skipped — clear `mnt/` and redeploy again.
+Then redeploy. rclone logs should show `mounting … -> /mnt/audiobooks` (no Permission denied). ABS `/audiobooks` must list the same files as the Storage Box.
 
 ### Coolify notes
 
