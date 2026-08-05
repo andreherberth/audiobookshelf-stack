@@ -1,29 +1,21 @@
-# Coolify-compatible stack: rclone FUSE mount + Audiobookshelf.
-# No Caddy, no custom networks, no fixed container names, no host ports.
-# Coolify's proxy (Traefik/Caddy) fronts audiobookshelf on container port 80.
+# Coolify-compatible stack: Object Storage FUSE mount (S3) + Audiobookshelf.
 #
 # In Coolify:
 #   Build Pack: Docker Compose
 #   Docker Compose Location: /compose.coolify.yml
 #   Assign your domain to the "audiobookshelf" service
 #
-# Media paths use bind mounts with rshared propagation so the rclone FUSE
-# mount is visible to Audiobookshelf. Named volumes cannot use :shared
-# (Docker rejects BindOptions on volume mounts — Coolify deploy error).
+# One rclone mount of the bucket root. Point ABS libraries at
+# /media/audiobooks, /media/podcasts, /media/ebooks.
 #
-# Host requirements: /dev/fuse available on the Coolify server.
-# If devices/cap_add are stripped, enable "Raw Compose Deployment".
-# If ABS sees empty libraries, on the host run:
-#   mount --make-rshared /data/coolify
-#
-# Media stays on Hetzner (mount, not sync). Tune VFS_CACHE_MAX_SIZE for small VPS disks.
-#
-# Storage Box variant: use compose.coolify.storagebox.yml instead.
+# Host: /dev/fuse required. If ABS sees empty dirs after a healthy deploy:
+#   sudo mount --make-rshared /data/coolify
 
 services:
   rclone:
     image: rclone/rclone:latest
     restart: unless-stopped
+    privileged: true
     environment:
       RCLONE_CONFIG_HETZNER_TYPE: s3
       RCLONE_CONFIG_HETZNER_PROVIDER: Hetzner
@@ -33,9 +25,10 @@ services:
       RCLONE_CONFIG_HETZNER_REGION: ${S3_REGION:-fsn1}
     command:
       - mount
-      - hetzner:${S3_BUCKET:?}/audiobooks
-      - /mnt/audiobooks
+      - hetzner:${S3_BUCKET:?}
+      - /mnt/media
       - --allow-other
+      - --allow-non-empty
       - --vfs-cache-mode
       - ${VFS_CACHE_MODE:-full}
       - --vfs-cache-max-size
@@ -46,119 +39,37 @@ services:
       - /cache
       - --dir-cache-time
       - ${VFS_DIR_CACHE_TIME:-72h}
+      - --log-level
+      - INFO
     cap_add:
       - SYS_ADMIN
     devices:
-      - /dev/fuse
+      - /dev/fuse:/dev/fuse:rwm
     security_opt:
       - apparmor:unconfined
     volumes:
       - rclone_cache:/cache
       - type: bind
-        source: ./mnt/audiobooks
-        target: /mnt/audiobooks
-        bind:
-          propagation: rshared
-        is_directory: true
-    healthcheck:
-      test: ["CMD", "mountpoint", "/mnt/audiobooks"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-
-  # Optional — remove these two services if you only need audiobooks.
-  rclone-podcasts:
-    image: rclone/rclone:latest
-    restart: unless-stopped
-    environment:
-      RCLONE_CONFIG_HETZNER_TYPE: s3
-      RCLONE_CONFIG_HETZNER_PROVIDER: Hetzner
-      RCLONE_CONFIG_HETZNER_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?}
-      RCLONE_CONFIG_HETZNER_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?}
-      RCLONE_CONFIG_HETZNER_ENDPOINT: ${S3_ENDPOINT:?}
-      RCLONE_CONFIG_HETZNER_REGION: ${S3_REGION:-fsn1}
-    command:
-      - mount
-      - hetzner:${S3_BUCKET:?}/podcasts
-      - /mnt/podcasts
-      - --allow-other
-      - --vfs-cache-mode
-      - ${VFS_CACHE_MODE:-full}
-      - --vfs-cache-max-size
-      - ${VFS_CACHE_MAX_SIZE:-2G}
-      - --vfs-cache-max-age
-      - ${VFS_CACHE_MAX_AGE:-72h}
-      - --cache-dir
-      - /cache
-      - --dir-cache-time
-      - ${VFS_DIR_CACHE_TIME:-72h}
-    cap_add:
-      - SYS_ADMIN
-    devices:
-      - /dev/fuse
-    security_opt:
-      - apparmor:unconfined
-    volumes:
-      - rclone_cache_podcasts:/cache
+        source: ./fuse.conf
+        target: /etc/fuse.conf
+        content: |
+          user_allow_other
       - type: bind
-        source: ./mnt/podcasts
-        target: /mnt/podcasts
+        source: ./mnt/media
+        target: /mnt/media
         bind:
           propagation: rshared
         is_directory: true
     healthcheck:
-      test: ["CMD", "mountpoint", "/mnt/podcasts"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-
-  rclone-ebooks:
-    image: rclone/rclone:latest
-    restart: unless-stopped
-    environment:
-      RCLONE_CONFIG_HETZNER_TYPE: s3
-      RCLONE_CONFIG_HETZNER_PROVIDER: Hetzner
-      RCLONE_CONFIG_HETZNER_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?}
-      RCLONE_CONFIG_HETZNER_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?}
-      RCLONE_CONFIG_HETZNER_ENDPOINT: ${S3_ENDPOINT:?}
-      RCLONE_CONFIG_HETZNER_REGION: ${S3_REGION:-fsn1}
-    command:
-      - mount
-      - hetzner:${S3_BUCKET:?}/ebooks
-      - /mnt/ebooks
-      - --allow-other
-      - --vfs-cache-mode
-      - ${VFS_CACHE_MODE:-full}
-      - --vfs-cache-max-size
-      - ${VFS_CACHE_MAX_SIZE:-2G}
-      - --vfs-cache-max-age
-      - ${VFS_CACHE_MAX_AGE:-72h}
-      - --cache-dir
-      - /cache
-      - --dir-cache-time
-      - ${VFS_DIR_CACHE_TIME:-72h}
-    cap_add:
-      - SYS_ADMIN
-    devices:
-      - /dev/fuse
-    security_opt:
-      - apparmor:unconfined
-    volumes:
-      - rclone_cache_ebooks:/cache
-      - type: bind
-        source: ./mnt/ebooks
-        target: /mnt/ebooks
-        bind:
-          propagation: rshared
-        is_directory: true
-    healthcheck:
-      test: ["CMD", "mountpoint", "/mnt/ebooks"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+      test:
+        [
+          "CMD-SHELL",
+          "grep -q ' /mnt/media ' /proc/mounts",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 90s
 
   audiobookshelf:
     image: ghcr.io/advplyr/audiobookshelf:latest
@@ -172,32 +83,16 @@ services:
       - abs_config:/config
       - abs_metadata:/metadata
       - type: bind
-        source: ./mnt/audiobooks
-        target: /audiobooks
+        source: ./mnt/media
+        target: /media
         read_only: true
         bind:
           propagation: rshared
         is_directory: true
-      - type: bind
-        source: ./mnt/podcasts
-        target: /podcasts
-        read_only: true
-        bind:
-          propagation: rshared
-        is_directory: true
-      - type: bind
-        source: ./mnt/ebooks
-        target: /ebooks
-        read_only: true
-        bind:
-          propagation: rshared
-        is_directory: true
-    # Coolify proxies container port 80 — assign a domain to this service in the UI.
-    # Do not publish host ports here.
+    # Coolify proxies container port 80 — assign a domain to this service.
+    # Libraries: /media/audiobooks, /media/podcasts, /media/ebooks
 
 volumes:
   rclone_cache:
-  rclone_cache_podcasts:
-  rclone_cache_ebooks:
   abs_config:
   abs_metadata:

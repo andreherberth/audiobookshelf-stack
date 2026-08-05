@@ -150,11 +150,18 @@ Yes — use the Coolify-specific compose files. Coolify already provides the rev
 2. Set **Docker Compose Location** to one of:
    - `/compose.coolify.yml` — Hetzner Object Storage (S3)
    - `/compose.coolify.storagebox.yml` — Hetzner Storage Box (SFTP mount)
-3. Fill environment variables in the Coolify UI (`S3_*` or `STORAGEBOX_*`, plus optional `VFS_CACHE_MAX_SIZE`).
+3. Fill environment variables in the Coolify UI:
+   - Object Storage: `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_ENDPOINT`, `S3_BUCKET`, …
+   - Storage Box: `STORAGEBOX_HOST`, `STORAGEBOX_USER`, **`STORAGEBOX_PASS` as the plain password** (the Coolify entrypoint runs `rclone obscure` for you)
+   - Optional: `VFS_CACHE_MAX_SIZE` (default `2G`)
 4. Assign your domain to the **audiobookshelf** service (listens on container port `80`).
 5. Deploy.
+6. In Audiobookshelf, add libraries pointing at:
+   - `/media/audiobooks`
+   - `/media/podcasts` (optional)
+   - `/media/ebooks` (optional)
 
-For Storage Box, obscure the password first (`./scripts/obscure-password.sh '…'`) and paste into `STORAGEBOX_PASS`. Create `audiobooks/` (and `podcasts/` / `ebooks/` if you keep those services) on the box before the first deploy.
+Create those folders on the remote before the first scan. Storage Box: enable **SSH support** (port `23`).
 
 ### Coolify notes
 
@@ -162,12 +169,14 @@ For Storage Box, obscure the password first (`./scripts/obscure-password.sh '…
 |-------|--------|
 | Proxy | Use Coolify's proxy — do not run the stack's Caddy service |
 | Networks | Coolify compose files define **no** custom networks (required for Traefik) |
-| Media mounts | Bind mounts under `./mnt/…` with `rshared` propagation (named volumes cannot use `:shared`) |
-| FUSE | Server needs `/dev/fuse`. The rclone services use `cap_add: SYS_ADMIN`, `devices: [/dev/fuse]`, and `apparmor:unconfined` |
-| Empty libraries | If ABS cannot see files, on the Coolify host run `sudo mount --make-rshared /data/coolify` (or the parent of your app bind paths), then redeploy |
-| Raw mode | If Coolify strips devices/capabilities and mounts fail, enable **Raw Compose Deployment** |
+| Media mounts | Bind mounts under `./mnt/media` with `rshared` propagation (named volumes cannot use `:shared`) |
+| FUSE | `privileged: true`, `/dev/fuse`, and an inlined `user_allow_other` fuse.conf |
+| Healthcheck | Uses `/proc/mounts` (rclone image may not include `mountpoint`) |
+| Password | Coolify Storage Box compose expects a **plain** `STORAGEBOX_PASS` |
+| Empty libraries | If ABS cannot see files, on the Coolify host run `sudo mount --make-rshared /data/coolify`, then redeploy |
+| Raw mode | If Coolify strips devices/capabilities and mounts still fail, enable **Raw Compose Deployment** |
 | Disk | Still a mount, not a sync. Lower `VFS_CACHE_MAX_SIZE` on small VPS disks |
-| Optional libs | Podcasts/ebooks mounts are included; delete those services from the compose if unused |
+| Logs | If deploy fails on rclone health, check the `rclone` service logs in Coolify for SFTP/FUSE errors |
 
 ## Podman
 
