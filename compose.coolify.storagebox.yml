@@ -1,47 +1,39 @@
 # Coolify-compatible stack: Storage Box FUSE mount (SFTP) + Audiobookshelf.
-# No Caddy, no custom networks, no fixed container names, no host ports.
-# Coolify's proxy fronts audiobookshelf on container port 80.
 #
 # In Coolify:
 #   Build Pack: Docker Compose
 #   Docker Compose Location: /compose.coolify.storagebox.yml
 #   Assign your domain to the "audiobookshelf" service
+#   Set STORAGEBOX_HOST / STORAGEBOX_USER / STORAGEBOX_PASS (plain password)
 #
-# Media paths use bind mounts with rshared propagation so the rclone FUSE
-# mount is visible to Audiobookshelf. Named volumes cannot use :shared
-# (Docker rejects BindOptions on volume mounts — Coolify deploy error).
+# One rclone mount of the Storage Box root (or STORAGEBOX_PATH). Point ABS
+# libraries at /media/audiobooks, /media/podcasts, /media/ebooks.
 #
-# Host requirements:
-#   - /dev/fuse on the Coolify server
-#   - Storage Box SSH support enabled (port 23)
-# If devices/cap_add are stripped, enable "Raw Compose Deployment".
-# If ABS sees empty libraries, on the host run:
-#   mount --make-rshared /data/coolify
-#
-# STORAGEBOX_PASS must be rclone-obscured:
-#   ./scripts/obscure-password.sh 'your-password'
-#
-# Create audiobooks/ (and optionally podcasts/, ebooks/) on the Storage Box first.
-# Media stays on the Storage Box — this is a mount, not a sync.
+# Host: /dev/fuse required. If ABS sees empty dirs after a healthy deploy:
+#   sudo mount --make-rshared /data/coolify
 
 services:
   rclone:
     image: rclone/rclone:latest
     restart: unless-stopped
+    privileged: true
     environment:
       RCLONE_CONFIG_HETZNER_TYPE: sftp
       RCLONE_CONFIG_HETZNER_HOST: ${STORAGEBOX_HOST:?}
       RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER:?}
-      RCLONE_CONFIG_HETZNER_PASS: ${STORAGEBOX_PASS:?}
+      # Plain password — entrypoint runs `rclone obscure` (do not pre-obscure).
+      STORAGEBOX_PASS: ${STORAGEBOX_PASS:?}
       RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
       RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
       RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
       RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
+    entrypoint: ["sh", "/entrypoint.sh"]
     command:
       - mount
-      - hetzner:${STORAGEBOX_PATH:-}audiobooks
-      - /mnt/audiobooks
+      - hetzner:${STORAGEBOX_PATH:-}
+      - /mnt/media
       - --allow-other
+      - --allow-non-empty
       - --vfs-cache-mode
       - ${VFS_CACHE_MODE:-full}
       - --vfs-cache-max-size
@@ -54,128 +46,50 @@ services:
       - ${VFS_DIR_CACHE_TIME:-72h}
       - --checkers
       - "4"
+      - --log-level
+      - INFO
     cap_add:
       - SYS_ADMIN
     devices:
-      - /dev/fuse
+      - /dev/fuse:/dev/fuse:rwm
     security_opt:
       - apparmor:unconfined
     volumes:
       - rclone_cache:/cache
       - type: bind
-        source: ./mnt/audiobooks
-        target: /mnt/audiobooks
-        bind:
-          propagation: rshared
-        is_directory: true
-    healthcheck:
-      test: ["CMD", "mountpoint", "/mnt/audiobooks"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-
-  # Optional — remove these two services if you only need audiobooks.
-  # Storage Box allows ~10 simultaneous connections; keep checkers low.
-  rclone-podcasts:
-    image: rclone/rclone:latest
-    restart: unless-stopped
-    environment:
-      RCLONE_CONFIG_HETZNER_TYPE: sftp
-      RCLONE_CONFIG_HETZNER_HOST: ${STORAGEBOX_HOST:?}
-      RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER:?}
-      RCLONE_CONFIG_HETZNER_PASS: ${STORAGEBOX_PASS:?}
-      RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
-      RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
-      RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
-      RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
-    command:
-      - mount
-      - hetzner:${STORAGEBOX_PATH:-}podcasts
-      - /mnt/podcasts
-      - --allow-other
-      - --vfs-cache-mode
-      - ${VFS_CACHE_MODE:-full}
-      - --vfs-cache-max-size
-      - ${VFS_CACHE_MAX_SIZE:-2G}
-      - --vfs-cache-max-age
-      - ${VFS_CACHE_MAX_AGE:-72h}
-      - --cache-dir
-      - /cache
-      - --dir-cache-time
-      - ${VFS_DIR_CACHE_TIME:-72h}
-      - --checkers
-      - "4"
-    cap_add:
-      - SYS_ADMIN
-    devices:
-      - /dev/fuse
-    security_opt:
-      - apparmor:unconfined
-    volumes:
-      - rclone_cache_podcasts:/cache
+        source: ./entrypoint.sh
+        target: /entrypoint.sh
+        content: |
+          #!/bin/sh
+          set -eu
+          if [ -n "${STORAGEBOX_PASS:-}" ]; then
+            export RCLONE_CONFIG_HETZNER_PASS
+            RCLONE_CONFIG_HETZNER_PASS="$(rclone obscure "$STORAGEBOX_PASS")"
+          fi
+          echo "rclone-entrypoint: starting: rclone $*"
+          exec rclone "$@"
       - type: bind
-        source: ./mnt/podcasts
-        target: /mnt/podcasts
-        bind:
-          propagation: rshared
-        is_directory: true
-    healthcheck:
-      test: ["CMD", "mountpoint", "/mnt/podcasts"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-
-  rclone-ebooks:
-    image: rclone/rclone:latest
-    restart: unless-stopped
-    environment:
-      RCLONE_CONFIG_HETZNER_TYPE: sftp
-      RCLONE_CONFIG_HETZNER_HOST: ${STORAGEBOX_HOST:?}
-      RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER:?}
-      RCLONE_CONFIG_HETZNER_PASS: ${STORAGEBOX_PASS:?}
-      RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
-      RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
-      RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
-      RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
-    command:
-      - mount
-      - hetzner:${STORAGEBOX_PATH:-}ebooks
-      - /mnt/ebooks
-      - --allow-other
-      - --vfs-cache-mode
-      - ${VFS_CACHE_MODE:-full}
-      - --vfs-cache-max-size
-      - ${VFS_CACHE_MAX_SIZE:-2G}
-      - --vfs-cache-max-age
-      - ${VFS_CACHE_MAX_AGE:-72h}
-      - --cache-dir
-      - /cache
-      - --dir-cache-time
-      - ${VFS_DIR_CACHE_TIME:-72h}
-      - --checkers
-      - "4"
-    cap_add:
-      - SYS_ADMIN
-    devices:
-      - /dev/fuse
-    security_opt:
-      - apparmor:unconfined
-    volumes:
-      - rclone_cache_ebooks:/cache
+        source: ./fuse.conf
+        target: /etc/fuse.conf
+        content: |
+          user_allow_other
       - type: bind
-        source: ./mnt/ebooks
-        target: /mnt/ebooks
+        source: ./mnt/media
+        target: /mnt/media
         bind:
           propagation: rshared
         is_directory: true
     healthcheck:
-      test: ["CMD", "mountpoint", "/mnt/ebooks"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+      # rclone image may not ship `mountpoint`; check /proc/mounts instead.
+      test:
+        [
+          "CMD-SHELL",
+          "grep -q ' /mnt/media ' /proc/mounts",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 90s
 
   audiobookshelf:
     image: ghcr.io/advplyr/audiobookshelf:latest
@@ -189,31 +103,16 @@ services:
       - abs_config:/config
       - abs_metadata:/metadata
       - type: bind
-        source: ./mnt/audiobooks
-        target: /audiobooks
+        source: ./mnt/media
+        target: /media
         read_only: true
         bind:
           propagation: rshared
         is_directory: true
-      - type: bind
-        source: ./mnt/podcasts
-        target: /podcasts
-        read_only: true
-        bind:
-          propagation: rshared
-        is_directory: true
-      - type: bind
-        source: ./mnt/ebooks
-        target: /ebooks
-        read_only: true
-        bind:
-          propagation: rshared
-        is_directory: true
-    # Coolify proxies container port 80 — assign a domain to this service in the UI.
+    # Coolify proxies container port 80 — assign a domain to this service.
+    # Libraries: /media/audiobooks, /media/podcasts, /media/ebooks
 
 volumes:
   rclone_cache:
-  rclone_cache_podcasts:
-  rclone_cache_ebooks:
   abs_config:
   abs_metadata:
