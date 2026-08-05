@@ -289,10 +289,10 @@ services:
   audiobookshelf:
     image: ghcr.io/advplyr/audiobookshelf:latest
     restart: unless-stopped
-    # service_started: Coolify deploy must not fail while rclone retries mount
+    # Wait for host FUSE before bind — otherwise /audiobooks stays an empty dir snapshot
     depends_on:
       rclone:
-        condition: service_started
+        condition: service_healthy
     environment:
       TZ: ${TZ:-UTC}
       SERVICE_URL_AUDIOBOOKSHELF: ${SERVICE_URL_AUDIOBOOKSHELF:-}
@@ -315,19 +315,19 @@ services:
         target: /audiobooks
         bind:
           create_host_path: false
-          propagation: rshared
+          propagation: rslave
       - type: bind
         source: ./mnt/podcasts
         target: /podcasts
         bind:
           create_host_path: false
-          propagation: rshared
+          propagation: rslave
       - type: bind
         source: ./mnt/ebooks
         target: /ebooks
         bind:
           create_host_path: false
-          propagation: rshared
+          propagation: rslave
 
 volumes:
   abs_config:
