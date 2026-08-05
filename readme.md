@@ -160,7 +160,9 @@ Yes — use the Coolify-specific compose files. Coolify already provides the rev
      - `STORAGEBOX_EBOOKS_DIR=ebooks`
    - Optional: `VFS_CACHE_MAX_SIZE` (default `2G`)
    - Do **not** put `${…}` in volume paths — Coolify rejects that. Compose uses literal `./mnt/…` (mapped to the app `mnt` dir).
-4. Assign your domain to the **audiobookshelf** service (listens on container port `80`).
+4. Assign your domain to the **audiobookshelf** service (listens on container port `80`), or click **Generate Domain** for a temporary URL.
+   - Leave **Raw Compose Deployment** **off** — Raw mode removes Coolify's Domains / proxy UI.
+   - Only enable Raw if rclone cannot use FUSE; then you must add Traefik labels yourself (see notes).
 5. Deploy.
 6. In Audiobookshelf: **Settings → Libraries → Add Library** and set the folder to one of:
    - `/audiobooks`
@@ -197,7 +199,7 @@ STORAGEBOX_EBOOKS_DIR=ebooks
 
 Media binds use literal `./mnt/{audiobooks,podcasts,ebooks}` (Coolify maps these under `/data/coolify/applications/<uuid>/mnt`). Do not set `HOST_MNT_BASE` in volume sources — Coolify blocks `${` there.
 
-If rclone logs `fusermount3: Permission denied`, enable **Raw Compose Deployment** in Coolify (Advanced) so `privileged` / `/dev/fuse` / `security_opt` are not stripped, then redeploy.
+If rclone logs `fusermount3: Permission denied` or `/dev/fuse missing`, enable **Raw Compose Deployment** so `privileged` / `/dev/fuse` / `security_opt` are not stripped — but note Raw mode **hides** Coolify Domains. Prefer keeping Raw **off** if mounts already work.
 
 Then redeploy. rclone logs should show `mounting … -> /mnt/audiobooks` (no Permission denied). ABS `/audiobooks` must list the same files as the Storage Box.
 
@@ -205,7 +207,8 @@ Then redeploy. rclone logs should show `mounting … -> /mnt/audiobooks` (no Per
 
 | Topic | Detail |
 |-------|--------|
-| Proxy | Use Coolify's proxy — do not run the stack's Caddy service |
+| Proxy | Use Coolify's proxy — do not run the stack's Caddy service. Assign Domains on **audiobookshelf** (`SERVICE_URL_AUDIOBOOKSHELF`) |
+| Domains missing | Turn **off** Raw Compose Deployment, redeploy/reload compose, then Generate Domain on **audiobookshelf** |
 | Networks | Coolify compose files define **no** custom networks (required for Traefik) |
 | Media mounts | Long-syntax binds from literal `./mnt/{audiobooks,podcasts,ebooks}` with `propagation: rshared` |
 | FUSE share | `fuse-share` init runs `mount --make-rshared` on a real mountpoint covering `/data/coolify` |
@@ -217,8 +220,8 @@ Then redeploy. rclone logs should show `mounting … -> /mnt/audiobooks` (no Per
 | Build `${` error | Coolify rejects `${…}` in volume sources — use literal `./mnt/…` (this compose) |
 | Build `::` error | Short `:rshared` syntax + absolute paths can yield `mnt::` — use long bind syntax |
 | Empty / no sync | ABS `/audiobooks` has files but rclone `/mnt/audiobooks` empty ⇒ local VPS shadow. `mount --make-rshared "$(findmnt -n -o TARGET -T /data/coolify)"`, delete `…/mnt/*`, redeploy |
-| rclone unhealthy | Open **rclone** logs. Non-empty mnt is now a warning; `/dev/fuse` missing or `fusermount3: Permission denied` ⇒ enable **Raw Compose Deployment**. Bad `STORAGEBOX_*` ⇒ FATAL probe error |
-| Raw mode | If Coolify strips devices/capabilities and mounts still fail, enable **Raw Compose Deployment** |
+| rclone unhealthy | Open **rclone** logs. Non-empty mnt is now a warning; `/dev/fuse` missing or `fusermount3: Permission denied` ⇒ enable **Raw Compose Deployment** (Domains UI will disappear). Bad `STORAGEBOX_*` ⇒ FATAL probe error |
+| Raw mode | Only if FUSE is stripped. Restores devices/caps but disables Coolify Domains — add Traefik labels manually if you must use Raw |
 | Disk | Still a mount, not a sync. Lower `VFS_CACHE_MAX_SIZE` on small VPS disks |
 | Logs | Check `rclone` logs for the mounted remote path (`hetzner:media/audiobooks` etc.) |
 

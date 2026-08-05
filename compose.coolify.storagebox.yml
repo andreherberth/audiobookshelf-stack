@@ -1,8 +1,8 @@
 # Coolify + Storage Box (SFTP FUSE) + Audiobookshelf
 #
-# Critical Coolify setting: enable "Raw Compose Deployment" if rclone is
-# unhealthy / logs show fusermount3 Permission denied (Coolify may strip
-# privileged, /dev/fuse, or security_opt).
+# Critical Coolify setting: leave "Raw Compose Deployment" OFF so Domains /
+# temporary URLs stay available. Only enable Raw if rclone lacks /dev/fuse or
+# logs fusermount3 Permission denied (Coolify may strip privileged/devices).
 #
 # Required env:
 #   STORAGEBOX_HOST, STORAGEBOX_USER, STORAGEBOX_PASS (plain password)
@@ -11,6 +11,7 @@
 #   STORAGEBOX_AUDIOBOOKS_DIR=audiobooks
 #   STORAGEBOX_PODCASTS_DIR=podcast
 #   STORAGEBOX_EBOOKS_DIR=ebooks
+#   SERVICE_URL_AUDIOBOOKSHELF — set by Coolify when you assign a domain
 #
 # Volume sources MUST be literal paths (Coolify rejects ${...} in bind sources).
 # Coolify maps ./mnt → /data/coolify/applications/<uuid>/mnt at runtime.
@@ -229,8 +230,15 @@ services:
     depends_on:
       rclone:
         condition: service_healthy
+    # Coolify Domains UI: assign (or Generate Domain) on this service.
+    # Do NOT enable "Raw Compose Deployment" unless FUSE fails — Raw mode
+    # hides Coolify proxy/domain options (you'd need manual Traefik labels).
     environment:
       TZ: ${TZ:-UTC}
+      # Coolify magic env — creates Domains / temporary URL for this service
+      SERVICE_URL_AUDIOBOOKSHELF: ${SERVICE_URL_AUDIOBOOKSHELF:-}
+    expose:
+      - "80"
     volumes:
       - abs_config:/config
       - abs_metadata:/metadata
