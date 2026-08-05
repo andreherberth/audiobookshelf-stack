@@ -14,9 +14,12 @@
 # ABS libraries: /audiobooks, /podcasts, /ebooks
 #
 # If ABS and Storage Box stay out of sync, ABS was writing to a local folder
-# instead of FUSE. The fuse-share service runs mount --make-rshared on the host.
-# You can also run once on the Coolify server:
-#   sudo mount --make-rshared /data/coolify
+# instead of FUSE. The fuse-share service runs mount --make-rshared on the
+# *mountpoint that covers* /data/coolify (that path itself is often not a mount).
+# Manual fix on the Coolify server:
+#   sudo mount --make-rshared "$(findmnt -n -o TARGET -T /data/coolify)"
+#   sudo find /data/coolify/applications/<uuid>/mnt -mindepth 1 -delete
+# Then redeploy.
 
 x-rclone-env: &rclone-env
   RCLONE_CONFIG_HETZNER_TYPE: sftp
@@ -28,6 +31,7 @@ x-rclone-env: &rclone-env
   RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
   RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
   RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
+  RCLONE_CONFIG_HETZNER_KNOWN_HOSTS_FILE: none
   VFS_CACHE_MODE: ${VFS_CACHE_MODE:-full}
   VFS_CACHE_MAX_SIZE: ${VFS_CACHE_MAX_SIZE:-2G}
   VFS_CACHE_MAX_AGE: ${VFS_CACHE_MAX_AGE:-72h}
@@ -43,7 +47,8 @@ x-rclone-security: &rclone-security
     - apparmor:unconfined
 
 services:
-  # Make Coolify app bind mounts able to see FUSE mounts from rclone.
+  # /data/coolify is usually a normal directory, not a mountpoint.
+  # mount --make-rshared only works on real mountpoints (often / or /data).
   fuse-share:
     image: alpine:3.20
     restart: "no"
@@ -55,12 +60,20 @@ services:
       - |
         set -eu
         apk add --no-cache util-linux >/dev/null
-        for p in /data/coolify /data/coolify/applications /; do
-          if [ -d "$$p" ]; then
-            nsenter -t 1 -m -- mount --make-rshared "$$p" && echo "rshared: $$p" || true
+        for probe in /data/coolify/applications /data/coolify /data /var/lib/docker /; do
+          if [ ! -e "$$probe" ]; then
+            continue
+          fi
+          mp="$$(nsenter -t 1 -m -- findmnt -n -o TARGET -T "$$probe" 2>/dev/null || true)"
+          if [ -n "$$mp" ]; then
+            if nsenter -t 1 -m -- mount --make-rshared "$$mp"; then
+              echo "fuse-share: rshared OK on mountpoint $$mp (from $$probe)"
+            else
+              echo "fuse-share: could not make-rshared $$mp (from $$probe)"
+            fi
           fi
         done
-        echo "fuse-share: host mount propagation ready"
+        echo "fuse-share: done"
 
   rclone:
     image: rclone/rclone:latest
