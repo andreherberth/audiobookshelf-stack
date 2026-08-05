@@ -289,10 +289,10 @@ services:
   audiobookshelf:
     image: ghcr.io/advplyr/audiobookshelf:latest
     restart: unless-stopped
-    # Wait for host FUSE before bind — otherwise /audiobooks stays an empty dir snapshot
+    # service_started: don't block Coolify deploy while rclone retries; rslave bind sees FUSE when ready
     depends_on:
       rclone:
-        condition: service_healthy
+        condition: service_started
     environment:
       TZ: ${TZ:-UTC}
       SERVICE_URL_AUDIOBOOKSHELF: ${SERVICE_URL_AUDIOBOOKSHELF:-}
