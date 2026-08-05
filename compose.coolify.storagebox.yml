@@ -1,7 +1,8 @@
 # Coolify + Storage Box (SFTP FUSE) + Audiobookshelf
 #
-# Critical Coolify setting: enable "Raw Compose Deployment" if FUSE still
-# gets Permission denied (Coolify may strip privileged/devices/security_opt).
+# Critical Coolify setting: enable "Raw Compose Deployment" if rclone is
+# unhealthy / logs show fusermount3 Permission denied (Coolify may strip
+# privileged, /dev/fuse, or security_opt).
 #
 # Required env:
 #   STORAGEBOX_HOST, STORAGEBOX_USER, STORAGEBOX_PASS (plain password)
@@ -48,6 +49,12 @@ x-rclone-common: &rclone-common
     VFS_CACHE_MAX_AGE: ${VFS_CACHE_MAX_AGE:-72h}
     VFS_DIR_CACHE_TIME: ${VFS_DIR_CACHE_TIME:-72h}
 
+x-rclone-health: &rclone-health
+  interval: 10s
+  timeout: 5s
+  retries: 30
+  start_period: 120s
+
 services:
   fuse-share:
     image: alpine:3.20
@@ -79,6 +86,7 @@ services:
     environment:
       <<: *rclone-env
       RCLONE_REMOTE_SUBDIR: ${STORAGEBOX_AUDIOBOOKS_DIR:-audiobooks}
+      RCLONE_MOUNT_PATH: /mnt/audiobooks
     volumes:
       - rclone_cache:/cache
       # Literal ./mnt — Coolify forbids ${...} in volume sources
@@ -93,19 +101,33 @@ services:
       - |
         set -eu
         echo "user_allow_other" > /etc/fuse.conf
-        export RCLONE_CONFIG_HETZNER_PASS="$$(rclone obscure "$$STORAGEBOX_PASS")"
-        remote="hetzner:$${STORAGEBOX_PATH}$${RCLONE_REMOTE_SUBDIR}"
-        echo "rclone: listing $$remote"
-        rclone lsf "$$remote" --max-depth 2 2>&1 | head -n 40 \
-          || echo "rclone: WARNING could not list $$remote"
-        if [ -n "$$(ls -A /mnt/audiobooks 2>/dev/null || true)" ]; then
-          echo "rclone: ERROR /mnt/audiobooks has local VPS files. On the host run:"
-          echo "  sudo find /data/coolify/applications/<uuid>/mnt/audiobooks -mindepth 1 -delete"
+        if [ ! -e /dev/fuse ]; then
+          echo "rclone: FATAL /dev/fuse missing — enable Coolify Raw Compose Deployment"
           exit 1
         fi
-        echo "rclone: mounting $$remote -> /mnt/audiobooks"
-        exec rclone mount "$$remote" /mnt/audiobooks \
+        ls -l /dev/fuse || true
+        export RCLONE_CONFIG_HETZNER_PASS="$$(rclone obscure "$$STORAGEBOX_PASS")"
+        remote="hetzner:$${STORAGEBOX_PATH}$${RCLONE_REMOTE_SUBDIR}"
+        echo "rclone: probing $$remote"
+        set +e
+        probe_out="$$(rclone lsf "$$remote" --max-depth 1 2>&1)"
+        probe_rc=$$?
+        set -e
+        echo "$$probe_out" | head -n 40
+        if [ "$$probe_rc" -ne 0 ]; then
+          echo "rclone: FATAL cannot access $$remote — check STORAGEBOX_HOST/USER/PASS/PATH/DIR"
+          exit 1
+        fi
+        if [ -n "$$(ls -A "$$RCLONE_MOUNT_PATH" 2>/dev/null || true)" ]; then
+          echo "rclone: WARNING $$RCLONE_MOUNT_PATH is not empty (local VPS shadow files)."
+          echo "rclone: mounting with --allow-non-empty; clear host mnt if ABS still shows stale files:"
+          echo "  sudo find /data/coolify/applications/<uuid>/mnt -mindepth 1 -delete"
+          ls -la "$$RCLONE_MOUNT_PATH" | head -n 20 || true
+        fi
+        echo "rclone: mounting $$remote -> $$RCLONE_MOUNT_PATH"
+        exec rclone mount "$$remote" "$$RCLONE_MOUNT_PATH" \
           --allow-other \
+          --allow-non-empty \
           --vfs-cache-mode "$$VFS_CACHE_MODE" \
           --vfs-cache-max-size "$$VFS_CACHE_MAX_SIZE" \
           --vfs-cache-max-age "$$VFS_CACHE_MAX_AGE" \
@@ -114,11 +136,8 @@ services:
           --checkers 2 \
           --log-level INFO
     healthcheck:
+      <<: *rclone-health
       test: ["CMD-SHELL", "grep -q ' /mnt/audiobooks ' /proc/mounts"]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-      start_period: 90s
 
   rclone-podcasts:
     <<: *rclone-common
@@ -128,6 +147,7 @@ services:
     environment:
       <<: *rclone-env
       RCLONE_REMOTE_SUBDIR: ${STORAGEBOX_PODCASTS_DIR:-podcast}
+      RCLONE_MOUNT_PATH: /mnt/podcasts
     volumes:
       - rclone_cache_podcasts:/cache
       - type: bind
@@ -141,12 +161,17 @@ services:
       - |
         set -eu
         echo "user_allow_other" > /etc/fuse.conf
+        if [ ! -e /dev/fuse ]; then
+          echo "rclone: FATAL /dev/fuse missing — enable Coolify Raw Compose Deployment"
+          exit 1
+        fi
         export RCLONE_CONFIG_HETZNER_PASS="$$(rclone obscure "$$STORAGEBOX_PASS")"
         remote="hetzner:$${STORAGEBOX_PATH}$${RCLONE_REMOTE_SUBDIR}"
         rclone mkdir "$$remote" 2>/dev/null || true
-        echo "rclone: mounting $$remote -> /mnt/podcasts"
-        exec rclone mount "$$remote" /mnt/podcasts \
+        echo "rclone: mounting $$remote -> $$RCLONE_MOUNT_PATH"
+        exec rclone mount "$$remote" "$$RCLONE_MOUNT_PATH" \
           --allow-other \
+          --allow-non-empty \
           --vfs-cache-mode "$$VFS_CACHE_MODE" \
           --vfs-cache-max-size "$$VFS_CACHE_MAX_SIZE" \
           --vfs-cache-max-age "$$VFS_CACHE_MAX_AGE" \
@@ -155,11 +180,8 @@ services:
           --checkers 2 \
           --log-level INFO
     healthcheck:
+      <<: *rclone-health
       test: ["CMD-SHELL", "grep -q ' /mnt/podcasts ' /proc/mounts"]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-      start_period: 90s
 
   rclone-ebooks:
     <<: *rclone-common
@@ -169,6 +191,7 @@ services:
     environment:
       <<: *rclone-env
       RCLONE_REMOTE_SUBDIR: ${STORAGEBOX_EBOOKS_DIR:-ebooks}
+      RCLONE_MOUNT_PATH: /mnt/ebooks
     volumes:
       - rclone_cache_ebooks:/cache
       - type: bind
@@ -182,12 +205,17 @@ services:
       - |
         set -eu
         echo "user_allow_other" > /etc/fuse.conf
+        if [ ! -e /dev/fuse ]; then
+          echo "rclone: FATAL /dev/fuse missing — enable Coolify Raw Compose Deployment"
+          exit 1
+        fi
         export RCLONE_CONFIG_HETZNER_PASS="$$(rclone obscure "$$STORAGEBOX_PASS")"
         remote="hetzner:$${STORAGEBOX_PATH}$${RCLONE_REMOTE_SUBDIR}"
         rclone mkdir "$$remote" 2>/dev/null || true
-        echo "rclone: mounting $$remote -> /mnt/ebooks"
-        exec rclone mount "$$remote" /mnt/ebooks \
+        echo "rclone: mounting $$remote -> $$RCLONE_MOUNT_PATH"
+        exec rclone mount "$$remote" "$$RCLONE_MOUNT_PATH" \
           --allow-other \
+          --allow-non-empty \
           --vfs-cache-mode "$$VFS_CACHE_MODE" \
           --vfs-cache-max-size "$$VFS_CACHE_MAX_SIZE" \
           --vfs-cache-max-age "$$VFS_CACHE_MAX_AGE" \
@@ -196,11 +224,8 @@ services:
           --checkers 2 \
           --log-level INFO
     healthcheck:
+      <<: *rclone-health
       test: ["CMD-SHELL", "grep -q ' /mnt/ebooks ' /proc/mounts"]
-      interval: 10s
-      timeout: 5s
-      retries: 18
-      start_period: 90s
 
   audiobookshelf:
     image: ghcr.io/advplyr/audiobookshelf:latest

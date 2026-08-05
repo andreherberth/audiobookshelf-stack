@@ -217,6 +217,7 @@ Then redeploy. rclone logs should show `mounting … -> /mnt/audiobooks` (no Per
 | Build `${` error | Coolify rejects `${…}` in volume sources — use literal `./mnt/…` (this compose) |
 | Build `::` error | Short `:rshared` syntax + absolute paths can yield `mnt::` — use long bind syntax |
 | Empty / no sync | ABS `/audiobooks` has files but rclone `/mnt/audiobooks` empty ⇒ local VPS shadow. `mount --make-rshared "$(findmnt -n -o TARGET -T /data/coolify)"`, delete `…/mnt/*`, redeploy |
+| rclone unhealthy | Open **rclone** logs. Non-empty mnt is now a warning; `/dev/fuse` missing or `fusermount3: Permission denied` ⇒ enable **Raw Compose Deployment**. Bad `STORAGEBOX_*` ⇒ FATAL probe error |
 | Raw mode | If Coolify strips devices/capabilities and mounts still fail, enable **Raw Compose Deployment** |
 | Disk | Still a mount, not a sync. Lower `VFS_CACHE_MAX_SIZE` on small VPS disks |
 | Logs | Check `rclone` logs for the mounted remote path (`hetzner:media/audiobooks` etc.) |
