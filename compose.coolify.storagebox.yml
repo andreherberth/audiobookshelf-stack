@@ -61,7 +61,6 @@ services:
     restart: "no"
     privileged: true
     pid: host
-    exclude_from_hc: true
     entrypoint: ["sh", "-c"]
     command:
       - |
@@ -95,7 +94,6 @@ services:
         target: /mnt/audiobooks
         bind:
           propagation: rshared
-        is_directory: true
     entrypoint: ["sh", "-c"]
     command:
       - |
@@ -155,7 +153,6 @@ services:
         target: /mnt/podcasts
         bind:
           propagation: rshared
-        is_directory: true
     entrypoint: ["sh", "-c"]
     command:
       - |
@@ -199,7 +196,6 @@ services:
         target: /mnt/ebooks
         bind:
           propagation: rshared
-        is_directory: true
     entrypoint: ["sh", "-c"]
     command:
       - |
@@ -243,19 +239,16 @@ services:
         target: /audiobooks
         bind:
           propagation: rshared
-        is_directory: true
       - type: bind
         source: ./mnt/podcasts
         target: /podcasts
         bind:
           propagation: rshared
-        is_directory: true
       - type: bind
         source: ./mnt/ebooks
         target: /ebooks
         bind:
           propagation: rshared
-        is_directory: true
 
 volumes:
   rclone_cache:
