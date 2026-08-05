@@ -160,6 +160,9 @@ services:
         condition: service_healthy
     environment:
       TZ: ${TZ:-UTC}
+      SERVICE_URL_AUDIOBOOKSHELF: ${SERVICE_URL_AUDIOBOOKSHELF:-}
+    expose:
+      - "80"
     volumes:
       - abs_config:/config
       - abs_metadata:/metadata
