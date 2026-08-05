@@ -170,9 +170,10 @@ Create those folders on the remote before the first scan. Storage Box: enable **
 | Proxy | Use Coolify's proxy — do not run the stack's Caddy service |
 | Networks | Coolify compose files define **no** custom networks (required for Traefik) |
 | Media mounts | Bind mounts under `./mnt/media` with `rshared` propagation (named volumes cannot use `:shared`) |
-| FUSE | `privileged: true`, `/dev/fuse`, and an inlined `user_allow_other` fuse.conf |
+| FUSE | `privileged: true`, `/dev/fuse`; `user_allow_other` written at container start (no fuse.conf bind) |
 | Healthcheck | Uses `/proc/mounts` (rclone image may not include `mountpoint`) |
 | Password | Coolify Storage Box compose expects a **plain** `STORAGEBOX_PASS` |
+| Leftover dirs | If an older deploy created `fuse.conf`/`entrypoint.sh` as directories under the app path, delete them before redeploying |
 | Empty libraries | If ABS cannot see files, on the Coolify host run `sudo mount --make-rshared /data/coolify`, then redeploy |
 | Raw mode | If Coolify strips devices/capabilities and mounts still fail, enable **Raw Compose Deployment** |
 | Disk | Still a mount, not a sync. Lower `VFS_CACHE_MAX_SIZE` on small VPS disks |
