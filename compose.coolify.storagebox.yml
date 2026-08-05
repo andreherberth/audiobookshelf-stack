@@ -6,44 +6,56 @@
 #   Assign your domain to the "audiobookshelf" service
 #   Set STORAGEBOX_HOST / STORAGEBOX_USER / STORAGEBOX_PASS (plain password)
 #
-# No Coolify "content" file binds (they often become directories and break
-# mounts). fuse.conf + password obscure happen in the container entrypoint.
+# In Audiobookshelf → Settings → Libraries → Add Library, use folder:
+#   /audiobooks   (books)
+#   /podcasts     (podcasts)
+#   /ebooks       (ebooks)
 #
-# If a previous deploy created fuse.conf/entrypoint.sh as directories, remove them:
-#   rm -rf /data/coolify/applications/w2cqu8zgqq5hw35ol4fzkanb/fuse.conf \
-#          /data/coolify/applications/w2cqu8zgqq5hw35ol4fzkanb/entrypoint.sh
-#
-# Libraries in ABS: /media/audiobooks, /media/podcasts, /media/ebooks
-# Host FUSE share fix if ABS sees empty dirs: sudo mount --make-rshared /data/coolify
+# Create those directories on the Storage Box first (under STORAGEBOX_PATH).
+# Host FUSE share fix if folders look empty: sudo mount --make-rshared /data/coolify
+
+x-rclone-env: &rclone-env
+  RCLONE_CONFIG_HETZNER_TYPE: sftp
+  RCLONE_CONFIG_HETZNER_HOST: ${STORAGEBOX_HOST:?}
+  RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER:?}
+  STORAGEBOX_PASS: ${STORAGEBOX_PASS:?}
+  STORAGEBOX_PATH: ${STORAGEBOX_PATH:-}
+  RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
+  RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
+  RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
+  RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
+  VFS_CACHE_MODE: ${VFS_CACHE_MODE:-full}
+  VFS_CACHE_MAX_SIZE: ${VFS_CACHE_MAX_SIZE:-2G}
+  VFS_CACHE_MAX_AGE: ${VFS_CACHE_MAX_AGE:-72h}
+  VFS_DIR_CACHE_TIME: ${VFS_DIR_CACHE_TIME:-72h}
+
+x-rclone-security: &rclone-security
+  privileged: true
+  cap_add:
+    - SYS_ADMIN
+  devices:
+    - /dev/fuse:/dev/fuse:rwm
+  security_opt:
+    - apparmor:unconfined
 
 services:
   rclone:
     image: rclone/rclone:latest
     restart: unless-stopped
-    privileged: true
+    <<: *rclone-security
     environment:
-      RCLONE_CONFIG_HETZNER_TYPE: sftp
-      RCLONE_CONFIG_HETZNER_HOST: ${STORAGEBOX_HOST:?}
-      RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER:?}
-      STORAGEBOX_PASS: ${STORAGEBOX_PASS:?}
-      STORAGEBOX_PATH: ${STORAGEBOX_PATH:-}
-      RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
-      RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
-      RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
-      RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
-      VFS_CACHE_MODE: ${VFS_CACHE_MODE:-full}
-      VFS_CACHE_MAX_SIZE: ${VFS_CACHE_MAX_SIZE:-2G}
-      VFS_CACHE_MAX_AGE: ${VFS_CACHE_MAX_AGE:-72h}
-      VFS_DIR_CACHE_TIME: ${VFS_DIR_CACHE_TIME:-72h}
+      <<: *rclone-env
+      RCLONE_REMOTE_SUBDIR: audiobooks
+      RCLONE_MOUNT_PATH: /mnt/audiobooks
     entrypoint: ["sh", "-c"]
-    # $$ -> $ for the container shell (Compose interpolation).
     command:
       - |
         set -eu
         echo "user_allow_other" > /etc/fuse.conf
         export RCLONE_CONFIG_HETZNER_PASS="$$(rclone obscure "$$STORAGEBOX_PASS")"
-        echo "rclone: mounting hetzner:$${STORAGEBOX_PATH} -> /mnt/media"
-        exec rclone mount "hetzner:$${STORAGEBOX_PATH}" /mnt/media \
+        remote="hetzner:$${STORAGEBOX_PATH}$${RCLONE_REMOTE_SUBDIR}"
+        echo "rclone: mounting $$remote -> $$RCLONE_MOUNT_PATH"
+        exec rclone mount "$$remote" "$$RCLONE_MOUNT_PATH" \
           --allow-other \
           --allow-non-empty \
           --vfs-cache-mode "$$VFS_CACHE_MODE" \
@@ -51,24 +63,100 @@ services:
           --vfs-cache-max-age "$$VFS_CACHE_MAX_AGE" \
           --cache-dir /cache \
           --dir-cache-time "$$VFS_DIR_CACHE_TIME" \
-          --checkers 4 \
+          --checkers 2 \
           --log-level INFO
-    cap_add:
-      - SYS_ADMIN
-    devices:
-      - /dev/fuse:/dev/fuse:rwm
-    security_opt:
-      - apparmor:unconfined
     volumes:
       - rclone_cache:/cache
       - type: bind
-        source: ./mnt/media
-        target: /mnt/media
+        source: ./mnt/audiobooks
+        target: /mnt/audiobooks
         bind:
           propagation: rshared
         is_directory: true
     healthcheck:
-      test: ["CMD-SHELL", "grep -q ' /mnt/media ' /proc/mounts"]
+      test: ["CMD-SHELL", "grep -q ' /mnt/audiobooks ' /proc/mounts"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 90s
+
+  rclone-podcasts:
+    image: rclone/rclone:latest
+    restart: unless-stopped
+    <<: *rclone-security
+    environment:
+      <<: *rclone-env
+      RCLONE_REMOTE_SUBDIR: podcasts
+      RCLONE_MOUNT_PATH: /mnt/podcasts
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -eu
+        echo "user_allow_other" > /etc/fuse.conf
+        export RCLONE_CONFIG_HETZNER_PASS="$$(rclone obscure "$$STORAGEBOX_PASS")"
+        remote="hetzner:$${STORAGEBOX_PATH}$${RCLONE_REMOTE_SUBDIR}"
+        echo "rclone: mounting $$remote -> $$RCLONE_MOUNT_PATH"
+        exec rclone mount "$$remote" "$$RCLONE_MOUNT_PATH" \
+          --allow-other \
+          --allow-non-empty \
+          --vfs-cache-mode "$$VFS_CACHE_MODE" \
+          --vfs-cache-max-size "$$VFS_CACHE_MAX_SIZE" \
+          --vfs-cache-max-age "$$VFS_CACHE_MAX_AGE" \
+          --cache-dir /cache \
+          --dir-cache-time "$$VFS_DIR_CACHE_TIME" \
+          --checkers 2 \
+          --log-level INFO
+    volumes:
+      - rclone_cache_podcasts:/cache
+      - type: bind
+        source: ./mnt/podcasts
+        target: /mnt/podcasts
+        bind:
+          propagation: rshared
+        is_directory: true
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q ' /mnt/podcasts ' /proc/mounts"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 90s
+
+  rclone-ebooks:
+    image: rclone/rclone:latest
+    restart: unless-stopped
+    <<: *rclone-security
+    environment:
+      <<: *rclone-env
+      RCLONE_REMOTE_SUBDIR: ebooks
+      RCLONE_MOUNT_PATH: /mnt/ebooks
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -eu
+        echo "user_allow_other" > /etc/fuse.conf
+        export RCLONE_CONFIG_HETZNER_PASS="$$(rclone obscure "$$STORAGEBOX_PASS")"
+        remote="hetzner:$${STORAGEBOX_PATH}$${RCLONE_REMOTE_SUBDIR}"
+        echo "rclone: mounting $$remote -> $$RCLONE_MOUNT_PATH"
+        exec rclone mount "$$remote" "$$RCLONE_MOUNT_PATH" \
+          --allow-other \
+          --allow-non-empty \
+          --vfs-cache-mode "$$VFS_CACHE_MODE" \
+          --vfs-cache-max-size "$$VFS_CACHE_MAX_SIZE" \
+          --vfs-cache-max-age "$$VFS_CACHE_MAX_AGE" \
+          --cache-dir /cache \
+          --dir-cache-time "$$VFS_DIR_CACHE_TIME" \
+          --checkers 2 \
+          --log-level INFO
+    volumes:
+      - rclone_cache_ebooks:/cache
+      - type: bind
+        source: ./mnt/ebooks
+        target: /mnt/ebooks
+        bind:
+          propagation: rshared
+        is_directory: true
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q ' /mnt/ebooks ' /proc/mounts"]
       interval: 10s
       timeout: 5s
       retries: 18
@@ -86,8 +174,22 @@ services:
       - abs_config:/config
       - abs_metadata:/metadata
       - type: bind
-        source: ./mnt/media
-        target: /media
+        source: ./mnt/audiobooks
+        target: /audiobooks
+        read_only: true
+        bind:
+          propagation: rshared
+        is_directory: true
+      - type: bind
+        source: ./mnt/podcasts
+        target: /podcasts
+        read_only: true
+        bind:
+          propagation: rshared
+        is_directory: true
+      - type: bind
+        source: ./mnt/ebooks
+        target: /ebooks
         read_only: true
         bind:
           propagation: rshared
@@ -95,5 +197,7 @@ services:
 
 volumes:
   rclone_cache:
+  rclone_cache_podcasts:
+  rclone_cache_ebooks:
   abs_config:
   abs_metadata:
