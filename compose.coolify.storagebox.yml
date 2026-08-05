@@ -15,7 +15,7 @@
 #   STORAGEBOX_AUDIOBOOKS_DIR=audiobooks
 #   STORAGEBOX_PODCASTS_DIR=podcast
 #   STORAGEBOX_EBOOKS_DIR=ebooks
-# ABS library folders (inside container): /mnt/audiobooks /mnt/podcasts /mnt/ebooks
+# ABS library folders (inside container): /mnt/media/audiobooks /mnt/media/podcasts /mnt/media/ebooks
 #
 # Volume sources must be literal (Coolify rejects ${...} in sources).
 #
@@ -66,7 +66,8 @@ x-rclone-mount: &rclone-mount
 
     export RCLONE_CONFIG_HETZNER_PASS="$$(rclone obscure "$$STORAGEBOX_PASS")"
     remote="hetzner:$${STORAGEBOX_PATH}$${RCLONE_REMOTE_SUBDIR}"
-    host_path="$${HOST_MNT_BASE}/$${RCLONE_HOST_SUBDIR}"
+    # Match remote layout (media/audiobooks) so ABS sees libraries under /mnt/media/…
+    host_path="$${HOST_MNT_BASE}/$${STORAGEBOX_PATH}$${RCLONE_HOST_SUBDIR}"
     app_dir="$$(dirname "$$HOST_MNT_BASE")"
     cache_dir="$${app_dir}/rclone-cache/$${RCLONE_HOST_SUBDIR}"
     bin_dir="$${app_dir}/bin"
@@ -239,7 +240,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "grep -Fq \"$$HOST_MNT_BASE/audiobooks\" /proc/1/mounts",
+          "grep -Fq \"$$HOST_MNT_BASE/$${STORAGEBOX_PATH}$${RCLONE_HOST_SUBDIR}\" /proc/1/mounts",
         ]
       interval: 15s
       timeout: 5s
@@ -261,7 +262,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "grep -Fq \"$$HOST_MNT_BASE/podcasts\" /proc/1/mounts",
+          "grep -Fq \"$$HOST_MNT_BASE/$${STORAGEBOX_PATH}$${RCLONE_HOST_SUBDIR}\" /proc/1/mounts",
         ]
       interval: 15s
       timeout: 5s
@@ -283,7 +284,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "grep -Fq \"$$HOST_MNT_BASE/ebooks\" /proc/1/mounts",
+          "grep -Fq \"$$HOST_MNT_BASE/$${STORAGEBOX_PATH}$${RCLONE_HOST_SUBDIR}\" /proc/1/mounts",
         ]
       interval: 15s
       timeout: 5s
