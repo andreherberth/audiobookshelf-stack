@@ -15,7 +15,7 @@
 #   STORAGEBOX_AUDIOBOOKS_DIR=audiobooks
 #   STORAGEBOX_PODCASTS_DIR=podcast
 #   STORAGEBOX_EBOOKS_DIR=ebooks
-# ABS library folders (inside container): /mnt/media/audiobooks /mnt/media/podcasts /mnt/media/ebooks
+# ABS library folders (inside container): /audiobooks /podcasts /ebooks
 #
 # Volume sources must be literal (Coolify rejects ${...} in sources).
 #
@@ -294,10 +294,14 @@ services:
   audiobookshelf:
     image: ghcr.io/advplyr/audiobookshelf:latest
     restart: unless-stopped
-    # service_started: don't block Coolify deploy while rclone retries; rslave bind sees FUSE when ready
+    # Wait for host FUSE at each bind source before starting (paths must exist as mount points)
     depends_on:
       rclone:
-        condition: service_started
+        condition: service_healthy
+      rclone-podcasts:
+        condition: service_healthy
+      rclone-ebooks:
+        condition: service_healthy
     environment:
       TZ: ${TZ:-UTC}
       SERVICE_URL_AUDIOBOOKSHELF: ${SERVICE_URL_AUDIOBOOKSHELF:-}
@@ -315,11 +319,24 @@ services:
     volumes:
       - abs_config:/config
       - abs_metadata:/metadata
-      # Bind parent mnt/ (not mnt/audiobooks) — Docker mkdir fails on FUSE mount points
+      # Bind each FUSE mount point directly — binding parent mnt/ shows empty dirs in container
       - type: bind
-        source: ./mnt
-        target: /mnt
+        source: ./mnt/media/audiobooks
+        target: /audiobooks
         bind:
+          create_host_path: false
+          propagation: rslave
+      - type: bind
+        source: ./mnt/media/podcasts
+        target: /podcasts
+        bind:
+          create_host_path: false
+          propagation: rslave
+      - type: bind
+        source: ./mnt/media/ebooks
+        target: /ebooks
+        bind:
+          create_host_path: false
           propagation: rslave
 
 volumes:
