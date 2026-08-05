@@ -91,10 +91,23 @@ x-rclone-mount: &rclone-mount
 
       nsenter -t 1 -m -- mkdir -p "$$host_path" "$$cache_dir"
 
+      fusermount_prog="$$(nsenter -t 1 -m -- sh -c 'command -v fusermount3 2>/dev/null || command -v fusermount 2>/dev/null || true')"
+      if [ -z "$$fusermount_prog" ]; then
+        echo "rclone: FATAL host fusermount missing — fuse-share should install fuse3; retry in 20s"
+        sleep 20
+        continue
+      fi
+      export FUSERMOUNT_PROG="$$fusermount_prog"
+      echo "rclone: FUSERMOUNT_PROG=$$FUSERMOUNT_PROG"
+
+      if ! nsenter -t 1 -m -- grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null; then
+        echo "rclone: enabling user_allow_other in host /etc/fuse.conf"
+        nsenter -t 1 -m -- sh -c 'echo user_allow_other >> /etc/fuse.conf' 2>/dev/null || true
+      fi
+
       if nsenter -t 1 -m -- findmnt -M "$$host_path" >/dev/null 2>&1; then
         echo "rclone: unmounting stale FUSE at $$host_path"
-        nsenter -t 1 -m -- fusermount3 -uz "$$host_path" 2>/dev/null \
-          || nsenter -t 1 -m -- fusermount -uz "$$host_path" 2>/dev/null \
+        nsenter -t 1 -m -- "$$fusermount_prog" -uz "$$host_path" 2>/dev/null \
           || nsenter -t 1 -m -- umount -l "$$host_path" 2>/dev/null || true
         sleep 1
       fi
@@ -104,7 +117,8 @@ x-rclone-mount: &rclone-mount
       fi
 
       echo "rclone: HOST mounting $$remote -> $$host_path"
-      exec nsenter -t 1 -m -- "$$host_rclone" mount "$$remote" "$$host_path" \
+      # nsenter -m: host mount namespace; FUSERMOUNT_PROG must be host fusermount (not container apk fuse3)
+      if nsenter -t 1 -m -- "$$host_rclone" mount "$$remote" "$$host_path" \
         --allow-other \
         --allow-non-empty \
         --vfs-cache-mode "$$VFS_CACHE_MODE" \
@@ -113,7 +127,12 @@ x-rclone-mount: &rclone-mount
         --cache-dir "$$cache_dir" \
         --dir-cache-time "$$VFS_DIR_CACHE_TIME" \
         --checkers 2 \
-        --log-level INFO
+        --log-level INFO; then
+        echo "rclone: mount exited cleanly for $$host_path"
+      else
+        echo "rclone: mount failed for $$host_path — retry in 20s"
+        sleep 20
+      fi
     done
 
 services:
@@ -159,7 +178,26 @@ services:
             || echo "fuse-share: FAILED $$mp"
         done
         nsenter -t 1 -m -- sh -c 'grep -q "^user_allow_other" /etc/fuse.conf 2>/dev/null || echo user_allow_other >> /etc/fuse.conf'
-        nsenter -t 1 -m -- sh -c 'command -v fusermount3 >/dev/null || command -v fusermount >/dev/null || echo "fuse-share: WARNING install fuse3 on host (apt install fuse3)"'
+        nsenter -t 1 -m -- sh -c '
+          if command -v apt-get >/dev/null 2>&1; then
+            command -v fusermount3 >/dev/null 2>&1 || (
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq && apt-get install -y -qq fuse3
+            )
+          fi
+          fusermount="$$(command -v fusermount3 2>/dev/null || command -v fusermount 2>/dev/null || true)"
+          if [ -n "$$fusermount" ]; then
+            echo "fuse-share: host fusermount=$$fusermount"
+          else
+            echo "fuse-share: WARNING host fusermount missing — apt install fuse3 on Coolify host"
+          fi
+          if grep -q "^user_allow_other" /etc/fuse.conf 2>/dev/null; then
+            echo "fuse-share: user_allow_other OK in /etc/fuse.conf"
+          else
+            echo "fuse-share: WARNING user_allow_other missing in /etc/fuse.conf"
+          fi
+          ls -l /dev/fuse 2>/dev/null || echo "fuse-share: WARNING /dev/fuse missing on host"
+        '
         echo "fuse-share: done"
 
   rclone:
