@@ -53,13 +53,12 @@ x-rclone-common: &rclone-common
 x-rclone-mount: &rclone-mount
   - |
     set -eu
-    echo "rclone: start subdir=$$RCLONE_HOST_SUBDIR (host FUSE via nsenter) script=v2-tee"
+    echo "rclone: start subdir=$$RCLONE_HOST_SUBDIR script=v3-fuse-share-bin"
     if [ ! -e /dev/fuse ]; then
       echo "rclone: FATAL /dev/fuse missing — enable Coolify Raw Compose Deployment"
       sleep 30
       exit 1
     fi
-    apk add --no-cache util-linux fuse3 2>/dev/null || true
     echo "user_allow_other" > /etc/fuse.conf
 
     export RCLONE_CONFIG_HETZNER_PASS="$$(rclone obscure "$$STORAGEBOX_PASS")"
@@ -68,13 +67,19 @@ x-rclone-mount: &rclone-mount
     app_dir="$$(dirname "$$HOST_MNT_BASE")"
     cache_dir="$${app_dir}/rclone-cache/$${RCLONE_HOST_SUBDIR}"
     bin_dir="$${app_dir}/bin"
-    rclone_src="$$(command -v rclone)"
+    host_rclone="$$bin_dir/rclone"
 
     echo "rclone: remote=$$remote"
     echo "rclone: host_path=$$host_path"
-    echo "rclone: rclone_src=$$rclone_src"
+    echo "rclone: host_rclone=$$host_rclone"
 
     while true; do
+      if ! nsenter -t 1 -m -- test -x "$$host_rclone"; then
+        echo "rclone: FATAL $$host_rclone missing — check fuse-share logs; retry in 20s"
+        sleep 20
+        continue
+      fi
+
       echo "rclone: probing $$remote"
       if ! rclone lsf "$$remote" --max-depth 1 2>&1 | head -n 40; then
         echo "rclone: probe failed — check STORAGEBOX_* / folder names; retry in 20s"
@@ -83,14 +88,7 @@ x-rclone-mount: &rclone-mount
       fi
       rclone mkdir "$$remote" 2>/dev/null || true
 
-      nsenter -t 1 -m -- mkdir -p "$$host_path" "$$cache_dir" "$$bin_dir"
-      # Copy rclone to host without /proc/$$ (Coolify strips compose $$ escaping)
-      if ! cat "$$rclone_src" | nsenter -t 1 -m -- tee "$$bin_dir/rclone" > /dev/null; then
-        echo "rclone: FATAL failed to copy rclone binary to $$bin_dir/rclone"
-        sleep 20
-        continue
-      fi
-      nsenter -t 1 -m -- chmod +x "$$bin_dir/rclone"
+      nsenter -t 1 -m -- mkdir -p "$$host_path" "$$cache_dir"
 
       if nsenter -t 1 -m -- findmnt -M "$$host_path" >/dev/null 2>&1; then
         echo "rclone: unmounting stale FUSE at $$host_path"
@@ -105,8 +103,7 @@ x-rclone-mount: &rclone-mount
       fi
 
       echo "rclone: HOST mounting $$remote -> $$host_path"
-      # nsenter -m: host mount namespace (host fusermount, not container)
-      exec nsenter -t 1 -m -- "$$bin_dir/rclone" mount "$$remote" "$$host_path" \
+      exec nsenter -t 1 -m -- "$$host_rclone" mount "$$remote" "$$host_path" \
         --allow-other \
         --allow-non-empty \
         --vfs-cache-mode "$$VFS_CACHE_MODE" \
@@ -124,11 +121,34 @@ services:
     restart: "no"
     privileged: true
     pid: host
+    environment:
+      HOST_MNT_BASE: ${HOST_MNT_BASE:?}
     entrypoint: ["sh", "-c"]
     command:
       - |
         set -eu
-        apk add --no-cache util-linux >/dev/null
+        echo "fuse-share: start script=v3-fuse-share-bin"
+        apk add --no-cache util-linux curl unzip ca-certificates >/dev/null
+        app_dir="$$(dirname "$$HOST_MNT_BASE")"
+        bin_dir="$${app_dir}/bin"
+        nsenter -t 1 -m -- mkdir -p "$$bin_dir"
+        if ! nsenter -t 1 -m -- test -x "$$bin_dir/rclone"; then
+          echo "fuse-share: installing rclone to $$bin_dir/rclone"
+          arch="$$(uname -m)"
+          case "$$arch" in
+            x86_64) rarch=amd64 ;;
+            aarch64|arm64) rarch=arm64 ;;
+            armv7l) rarch=arm-v7 ;;
+            *) rarch=amd64 ;;
+          esac
+          curl -fsSL "https://downloads.rclone.org/rclone-current-linux-$${rarch}.zip" -o /tmp/rclone.zip
+          unzip -oq /tmp/rclone.zip -d /tmp
+          cat /tmp/rclone-*/rclone | nsenter -t 1 -m -- tee "$$bin_dir/rclone" > /dev/null
+          nsenter -t 1 -m -- chmod +x "$$bin_dir/rclone"
+          echo "fuse-share: rclone installed"
+        else
+          echo "fuse-share: rclone already at $$bin_dir/rclone"
+        fi
         for probe in /data/coolify/applications /data/coolify /data /var/lib/docker /; do
           [ -e "$$probe" ] || continue
           mp="$$(nsenter -t 1 -m -- findmnt -n -o TARGET -T "$$probe" 2>/dev/null || true)"
