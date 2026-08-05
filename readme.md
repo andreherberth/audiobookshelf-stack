@@ -153,13 +153,13 @@ Yes — use the Coolify-specific compose files. Coolify already provides the rev
 3. Fill environment variables in the Coolify UI:
    - Object Storage: `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_ENDPOINT`, `S3_BUCKET`, …
    - Storage Box: `STORAGEBOX_HOST`, `STORAGEBOX_USER`, **`STORAGEBOX_PASS` as the plain password**
-   - Storage Box **required**: `HOST_MNT_BASE=/data/coolify/applications/<uuid>/mnt` (no default — short `:rshared` syntax breaks Compose when this path is set)
    - For a `media/audiobooks` layout on the box:
      - `STORAGEBOX_PATH=media/`
      - `STORAGEBOX_AUDIOBOOKS_DIR=audiobooks`
      - `STORAGEBOX_PODCASTS_DIR=podcast` (or `podcasts` if that is the folder name)
      - `STORAGEBOX_EBOOKS_DIR=ebooks`
    - Optional: `VFS_CACHE_MAX_SIZE` (default `2G`)
+   - Do **not** put `${…}` in volume paths — Coolify rejects that. Compose uses literal `./mnt/…` (mapped to the app `mnt` dir).
 4. Assign your domain to the **audiobookshelf** service (listens on container port `80`).
 5. Deploy.
 6. In Audiobookshelf: **Settings → Libraries → Add Library** and set the folder to one of:
@@ -187,14 +187,15 @@ grep -q user_allow_other /etc/fuse.conf 2>/dev/null || echo user_allow_other | s
 sudo find /data/coolify/applications/w2cqu8zgqq5hw35ol4fzkanb/mnt -mindepth 1 -delete
 ```
 
-In Coolify env set:
+In Coolify env set (example):
 ```
-HOST_MNT_BASE=/data/coolify/applications/w2cqu8zgqq5hw35ol4fzkanb/mnt
 STORAGEBOX_PATH=media/
 STORAGEBOX_AUDIOBOOKS_DIR=audiobooks
 STORAGEBOX_PODCASTS_DIR=podcast
 STORAGEBOX_EBOOKS_DIR=ebooks
 ```
+
+Media binds use literal `./mnt/{audiobooks,podcasts,ebooks}` (Coolify maps these under `/data/coolify/applications/<uuid>/mnt`). Do not set `HOST_MNT_BASE` in volume sources — Coolify blocks `${` there.
 
 If rclone logs `fusermount3: Permission denied`, enable **Raw Compose Deployment** in Coolify (Advanced) so `privileged` / `/dev/fuse` / `security_opt` are not stripped, then redeploy.
 
@@ -206,15 +207,15 @@ Then redeploy. rclone logs should show `mounting … -> /mnt/audiobooks` (no Per
 |-------|--------|
 | Proxy | Use Coolify's proxy — do not run the stack's Caddy service |
 | Networks | Coolify compose files define **no** custom networks (required for Traefik) |
-| Media mounts | Long-syntax binds from `$HOST_MNT_BASE/{audiobooks,podcasts,ebooks}` with `propagation: rshared` |
-| `HOST_MNT_BASE` | **Required** for Storage Box Coolify compose (absolute Coolify app `mnt` path) |
+| Media mounts | Long-syntax binds from literal `./mnt/{audiobooks,podcasts,ebooks}` with `propagation: rshared` |
 | FUSE share | `fuse-share` init runs `mount --make-rshared` on a real mountpoint covering `/data/coolify` |
 | FUSE | `privileged: true`, `/dev/fuse`; `user_allow_other` written at container start (no fuse.conf bind) |
 | Healthcheck | Uses `/proc/mounts` (rclone image may not include `mountpoint`) |
 | Password | Coolify Storage Box compose expects a **plain** `STORAGEBOX_PASS` |
 | Paths | Default remote prefix `media/` + dirs `audiobooks` / `podcast` / `ebooks` (override via env) |
 | Leftover dirs | If an older deploy created `fuse.conf`/`entrypoint.sh` as directories under the app path, delete them before redeploying |
-| Build `::` error | `invalid spec: …/mnt:: empty section between colons` ⇒ use this compose (long bind syntax); set `HOST_MNT_BASE` |
+| Build `${` error | Coolify rejects `${…}` in volume sources — use literal `./mnt/…` (this compose) |
+| Build `::` error | Short `:rshared` syntax + absolute paths can yield `mnt::` — use long bind syntax |
 | Empty / no sync | ABS `/audiobooks` has files but rclone `/mnt/audiobooks` empty ⇒ local VPS shadow. `mount --make-rshared "$(findmnt -n -o TARGET -T /data/coolify)"`, delete `…/mnt/*`, redeploy |
 | Raw mode | If Coolify strips devices/capabilities and mounts still fail, enable **Raw Compose Deployment** |
 | Disk | Still a mount, not a sync. Lower `VFS_CACHE_MAX_SIZE` on small VPS disks |

@@ -5,16 +5,18 @@
 #
 # Required env:
 #   STORAGEBOX_HOST, STORAGEBOX_USER, STORAGEBOX_PASS (plain password)
-#   HOST_MNT_BASE=/data/coolify/applications/<uuid>/mnt
 # Optional:
 #   STORAGEBOX_PATH=media/
 #   STORAGEBOX_AUDIOBOOKS_DIR=audiobooks
 #   STORAGEBOX_PODCASTS_DIR=podcast
 #   STORAGEBOX_EBOOKS_DIR=ebooks
 #
+# Volume sources MUST be literal paths (Coolify rejects ${...} in bind sources).
+# Coolify maps ./mnt → /data/coolify/applications/<uuid>/mnt at runtime.
+#
 # One-time on the Coolify host:
 #   sudo mount --make-rshared "$(findmnt -n -o TARGET -T /data/coolify)"
-#   sudo find "$HOST_MNT_BASE" -mindepth 1 -delete
+#   sudo find /data/coolify/applications/<uuid>/mnt -mindepth 1 -delete
 #   grep -q user_allow_other /etc/fuse.conf || echo user_allow_other | sudo tee -a /etc/fuse.conf
 #
 # ABS libraries: /audiobooks /podcasts /ebooks
@@ -36,7 +38,6 @@ x-rclone-common: &rclone-common
     RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER:?}
     STORAGEBOX_PASS: ${STORAGEBOX_PASS:?}
     STORAGEBOX_PATH: ${STORAGEBOX_PATH:-media/}
-    HOST_MNT_BASE: ${HOST_MNT_BASE:?}
     RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
     RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
     RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
@@ -80,12 +81,13 @@ services:
       RCLONE_REMOTE_SUBDIR: ${STORAGEBOX_AUDIOBOOKS_DIR:-audiobooks}
     volumes:
       - rclone_cache:/cache
-      # Long syntax avoids Compose parsing ${VAR}/path:target:mode as broken ::
+      # Literal ./mnt — Coolify forbids ${...} in volume sources
       - type: bind
-        source: ${HOST_MNT_BASE:?}/audiobooks
+        source: ./mnt/audiobooks
         target: /mnt/audiobooks
         bind:
           propagation: rshared
+        is_directory: true
     entrypoint: ["sh", "-c"]
     command:
       - |
@@ -98,7 +100,7 @@ services:
           || echo "rclone: WARNING could not list $$remote"
         if [ -n "$$(ls -A /mnt/audiobooks 2>/dev/null || true)" ]; then
           echo "rclone: ERROR /mnt/audiobooks has local VPS files. On the host run:"
-          echo "  sudo find $$HOST_MNT_BASE/audiobooks -mindepth 1 -delete"
+          echo "  sudo find /data/coolify/applications/<uuid>/mnt/audiobooks -mindepth 1 -delete"
           exit 1
         fi
         echo "rclone: mounting $$remote -> /mnt/audiobooks"
@@ -129,10 +131,11 @@ services:
     volumes:
       - rclone_cache_podcasts:/cache
       - type: bind
-        source: ${HOST_MNT_BASE:?}/podcasts
+        source: ./mnt/podcasts
         target: /mnt/podcasts
         bind:
           propagation: rshared
+        is_directory: true
     entrypoint: ["sh", "-c"]
     command:
       - |
@@ -169,10 +172,11 @@ services:
     volumes:
       - rclone_cache_ebooks:/cache
       - type: bind
-        source: ${HOST_MNT_BASE:?}/ebooks
+        source: ./mnt/ebooks
         target: /mnt/ebooks
         bind:
           propagation: rshared
+        is_directory: true
     entrypoint: ["sh", "-c"]
     command:
       - |
@@ -210,20 +214,23 @@ services:
       - abs_config:/config
       - abs_metadata:/metadata
       - type: bind
-        source: ${HOST_MNT_BASE:?}/audiobooks
+        source: ./mnt/audiobooks
         target: /audiobooks
         bind:
           propagation: rshared
+        is_directory: true
       - type: bind
-        source: ${HOST_MNT_BASE:?}/podcasts
+        source: ./mnt/podcasts
         target: /podcasts
         bind:
           propagation: rshared
+        is_directory: true
       - type: bind
-        source: ${HOST_MNT_BASE:?}/ebooks
+        source: ./mnt/ebooks
         target: /ebooks
         bind:
           propagation: rshared
+        is_directory: true
 
 volumes:
   rclone_cache:
