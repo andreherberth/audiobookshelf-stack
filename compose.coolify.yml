@@ -5,11 +5,14 @@
 #   Docker Compose Location: /compose.coolify.yml
 #   Assign your domain to the "audiobookshelf" service
 #
-# One rclone mount of the bucket root. Point ABS libraries at
-# /media/audiobooks, /media/podcasts, /media/ebooks.
+# No Coolify "content" file binds (they often become directories).
+# fuse.conf is written at container start.
 #
-# Host: /dev/fuse required. If ABS sees empty dirs after a healthy deploy:
-#   sudo mount --make-rshared /data/coolify
+# If a previous deploy created fuse.conf/entrypoint.sh as directories, remove them:
+#   rm -rf /data/coolify/applications/<uuid>/fuse.conf \
+#          /data/coolify/applications/<uuid>/entrypoint.sh
+#
+# Libraries in ABS: /media/audiobooks, /media/podcasts, /media/ebooks
 
 services:
   rclone:
@@ -23,24 +26,26 @@ services:
       RCLONE_CONFIG_HETZNER_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?}
       RCLONE_CONFIG_HETZNER_ENDPOINT: ${S3_ENDPOINT:?}
       RCLONE_CONFIG_HETZNER_REGION: ${S3_REGION:-fsn1}
+      S3_BUCKET: ${S3_BUCKET:?}
+      VFS_CACHE_MODE: ${VFS_CACHE_MODE:-full}
+      VFS_CACHE_MAX_SIZE: ${VFS_CACHE_MAX_SIZE:-2G}
+      VFS_CACHE_MAX_AGE: ${VFS_CACHE_MAX_AGE:-72h}
+      VFS_DIR_CACHE_TIME: ${VFS_DIR_CACHE_TIME:-72h}
+    entrypoint: ["sh", "-c"]
     command:
-      - mount
-      - hetzner:${S3_BUCKET:?}
-      - /mnt/media
-      - --allow-other
-      - --allow-non-empty
-      - --vfs-cache-mode
-      - ${VFS_CACHE_MODE:-full}
-      - --vfs-cache-max-size
-      - ${VFS_CACHE_MAX_SIZE:-2G}
-      - --vfs-cache-max-age
-      - ${VFS_CACHE_MAX_AGE:-72h}
-      - --cache-dir
-      - /cache
-      - --dir-cache-time
-      - ${VFS_DIR_CACHE_TIME:-72h}
-      - --log-level
-      - INFO
+      - |
+        set -eu
+        echo "user_allow_other" > /etc/fuse.conf
+        echo "rclone: mounting hetzner:$$S3_BUCKET -> /mnt/media"
+        exec rclone mount "hetzner:$$S3_BUCKET" /mnt/media \
+          --allow-other \
+          --allow-non-empty \
+          --vfs-cache-mode "$$VFS_CACHE_MODE" \
+          --vfs-cache-max-size "$$VFS_CACHE_MAX_SIZE" \
+          --vfs-cache-max-age "$$VFS_CACHE_MAX_AGE" \
+          --cache-dir /cache \
+          --dir-cache-time "$$VFS_DIR_CACHE_TIME" \
+          --log-level INFO
     cap_add:
       - SYS_ADMIN
     devices:
@@ -50,22 +55,13 @@ services:
     volumes:
       - rclone_cache:/cache
       - type: bind
-        source: ./fuse.conf
-        target: /etc/fuse.conf
-        content: |
-          user_allow_other
-      - type: bind
         source: ./mnt/media
         target: /mnt/media
         bind:
           propagation: rshared
         is_directory: true
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "grep -q ' /mnt/media ' /proc/mounts",
-        ]
+      test: ["CMD-SHELL", "grep -q ' /mnt/media ' /proc/mounts"]
       interval: 10s
       timeout: 5s
       retries: 18
@@ -89,8 +85,6 @@ services:
         bind:
           propagation: rshared
         is_directory: true
-    # Coolify proxies container port 80 — assign a domain to this service.
-    # Libraries: /media/audiobooks, /media/podcasts, /media/ebooks
 
 volumes:
   rclone_cache:
