@@ -55,7 +55,7 @@ x-rclone-common: &rclone-common
 
 x-rclone-mount: &rclone-mount
   - |
-    set -eu
+    set -u
     echo "rclone: start subdir=$$RCLONE_HOST_SUBDIR script=v3-fuse-share-bin"
     if [ ! -e /dev/fuse ]; then
       echo "rclone: FATAL /dev/fuse missing — enable Coolify Raw Compose Deployment"
@@ -112,15 +112,14 @@ x-rclone-mount: &rclone-mount
         nsenter -t 1 -m -- "$$fusermount_prog" -uz "$$host_path" 2>/dev/null \
           || nsenter -t 1 -m -- umount -l "$$host_path" 2>/dev/null || true
         sleep 1
-      fi
-      if [ -n "$$(nsenter -t 1 -m -- ls -A "$$host_path" 2>/dev/null || true)" ]; then
+      elif [ -n "$$(nsenter -t 1 -m -- ls -A "$$host_path" 2>/dev/null || true)" ]; then
         echo "rclone: clearing local shadow files under $$host_path"
-        nsenter -t 1 -m -- find "$$host_path" -mindepth 1 -delete
+        nsenter -t 1 -m -- find "$$host_path" -mindepth 1 -delete 2>/dev/null || true
       fi
 
       echo "rclone: HOST mounting $$remote -> $$host_path"
       # nsenter -m: host mount namespace; FUSERMOUNT_PROG must be host fusermount (not container apk fuse3)
-      if nsenter -t 1 -m -- "$$host_rclone" mount "$$remote" "$$host_path" \
+      nsenter -t 1 -m -- "$$host_rclone" mount "$$remote" "$$host_path" \
         --allow-other \
         --allow-non-empty \
         --vfs-cache-mode "$$VFS_CACHE_MODE" \
@@ -129,17 +128,14 @@ x-rclone-mount: &rclone-mount
         --cache-dir "$$cache_dir" \
         --dir-cache-time "$$VFS_DIR_CACHE_TIME" \
         --checkers 2 \
-        --log-level INFO; then
-        echo "rclone: mount exited cleanly for $$host_path"
-      else
-        echo "rclone: mount failed for $$host_path — retry in 20s"
-        sleep 20
-      fi
+        --log-level INFO \
+        || { echo "rclone: mount failed for $$host_path — retry in 20s"; sleep 20; }
     done
 
 services:
   fuse-share:
     image: alpine:3.20
+    # One-shot init: Exited (0) after "fuse-share: done" is expected — not an error
     restart: "no"
     privileged: true
     pid: host
