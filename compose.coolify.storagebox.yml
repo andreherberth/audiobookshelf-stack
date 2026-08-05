@@ -33,7 +33,7 @@ services:
       RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
     command:
       - mount
-      - hetzner:${STORAGEBOX_PATH:-}audiobooks
+      - ./hetzner:${STORAGEBOX_PATH:-}audiobooks
       - /mnt/audiobooks
       - --allow-other
       - --vfs-cache-mode
@@ -80,7 +80,7 @@ services:
       RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
     command:
       - mount
-      - hetzner:${STORAGEBOX_PATH:-}podcasts
+      - ./hetzner:${STORAGEBOX_PATH:-}podcasts
       - /mnt/podcasts
       - --allow-other
       - --vfs-cache-mode
@@ -125,7 +125,7 @@ services:
       RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
     command:
       - mount
-      - hetzner:${STORAGEBOX_PATH:-}ebooks
+      - ./hetzner:${STORAGEBOX_PATH:-}ebooks
       - /mnt/ebooks
       - --allow-other
       - --vfs-cache-mode
