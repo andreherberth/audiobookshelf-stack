@@ -153,6 +153,7 @@ Yes — use the Coolify-specific compose files. Coolify already provides the rev
 3. Fill environment variables in the Coolify UI:
    - Object Storage: `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_ENDPOINT`, `S3_BUCKET`, …
    - Storage Box: `STORAGEBOX_HOST`, `STORAGEBOX_USER`, **`STORAGEBOX_PASS` as the plain password**
+   - Storage Box **required**: `HOST_MNT_BASE=/data/coolify/applications/<uuid>/mnt` (used by rclone host mounts; not a volume source)
    - For a `media/audiobooks` layout on the box:
      - `STORAGEBOX_PATH=media/`
      - `STORAGEBOX_AUDIOBOOKS_DIR=audiobooks`
@@ -191,13 +192,14 @@ sudo find /data/coolify/applications/w2cqu8zgqq5hw35ol4fzkanb/mnt -mindepth 1 -d
 
 In Coolify env set (example):
 ```
+HOST_MNT_BASE=/data/coolify/applications/w2cqu8zgqq5hw35ol4fzkanb/mnt
 STORAGEBOX_PATH=media/
 STORAGEBOX_AUDIOBOOKS_DIR=audiobooks
 STORAGEBOX_PODCASTS_DIR=podcast
 STORAGEBOX_EBOOKS_DIR=ebooks
 ```
 
-Media binds use literal `./mnt/{audiobooks,podcasts,ebooks}` (Coolify maps these under `/data/coolify/applications/<uuid>/mnt`). Do not set `HOST_MNT_BASE` in volume sources — Coolify blocks `${` there.
+rclone mounts Storage Box **on the host** under `HOST_MNT_BASE` (via `nsenter`). ABS then bind-mounts `./mnt/…` so uploads go to the box — not a local VPS folder.
 
 If rclone logs `fusermount3: Permission denied` or `/dev/fuse missing`, enable **Raw Compose Deployment** so `privileged` / `/dev/fuse` / `security_opt` are not stripped — but note Raw mode **hides** Coolify Domains. Prefer keeping Raw **off** if mounts already work.
 
@@ -210,7 +212,9 @@ Then redeploy. rclone logs should show `mounting … -> /mnt/audiobooks` (no Per
 | Proxy | Use Coolify's proxy — do not run the stack's Caddy service. Assign Domains on **audiobookshelf** (`SERVICE_URL_AUDIOBOOKSHELF`) |
 | Domains missing | Turn **off** Raw Compose Deployment, redeploy/reload compose, then Generate Domain on **audiobookshelf** |
 | Networks | Coolify compose files define **no** custom networks (required for Traefik) |
-| Media mounts | Long-syntax binds from literal `./mnt/{audiobooks,podcasts,ebooks}` with `propagation: rshared` |
+| Media mounts | rclone FUSE on **host** at `$HOST_MNT_BASE/…`; ABS binds `./mnt/…` after mounts are healthy |
+| `HOST_MNT_BASE` | **Required** env (not a volume source): `/data/coolify/applications/<uuid>/mnt` |
+| Upload not on box | ABS wrote to local VPS shadow. Confirm rclone logs say `HOST mounting`, set `HOST_MNT_BASE`, clear `…/mnt/*`, redeploy |
 | FUSE share | `fuse-share` init runs `mount --make-rshared` on a real mountpoint covering `/data/coolify` |
 | FUSE | `privileged: true`, `/dev/fuse`; `user_allow_other` written at container start (no fuse.conf bind) |
 | Healthcheck | Uses `/proc/mounts` (rclone image may not include `mountpoint`) |
