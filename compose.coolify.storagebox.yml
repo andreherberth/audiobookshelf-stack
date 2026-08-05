@@ -53,7 +53,7 @@ x-rclone-common: &rclone-common
 x-rclone-mount: &rclone-mount
   - |
     set -eu
-    echo "rclone: start subdir=$$RCLONE_HOST_SUBDIR (host FUSE via nsenter)"
+    echo "rclone: start subdir=$$RCLONE_HOST_SUBDIR (host FUSE via nsenter) script=v2-tee"
     if [ ! -e /dev/fuse ]; then
       echo "rclone: FATAL /dev/fuse missing — enable Coolify Raw Compose Deployment"
       sleep 30
