@@ -1,4 +1,5 @@
 # Coolify + Storage Box (SFTP FUSE) + Audiobookshelf
+# COMPOSE_MIN_COMMIT=b50d484 (fuse-share installs host rclone; no /proc copy)
 #
 # Host-namespace FUSE (nsenter) — in-container fusermount fails with
 # "Permission denied" on Coolify bind paths under /data/coolify.
@@ -230,9 +231,10 @@ services:
   audiobookshelf:
     image: ghcr.io/advplyr/audiobookshelf:latest
     restart: unless-stopped
+    # service_started: Coolify deploy must not fail while rclone retries mount
     depends_on:
       rclone:
-        condition: service_healthy
+        condition: service_started
     environment:
       TZ: ${TZ:-UTC}
       SERVICE_URL_AUDIOBOOKSHELF: ${SERVICE_URL_AUDIOBOOKSHELF:-}
