@@ -15,6 +15,7 @@
 #   STORAGEBOX_AUDIOBOOKS_DIR=audiobooks
 #   STORAGEBOX_PODCASTS_DIR=podcast
 #   STORAGEBOX_EBOOKS_DIR=ebooks
+# ABS library folders (inside container): /mnt/audiobooks /mnt/podcasts /mnt/ebooks
 #
 # Volume sources must be literal (Coolify rejects ${...} in sources).
 #
@@ -153,6 +154,7 @@ services:
         app_dir="$$(dirname "$$HOST_MNT_BASE")"
         bin_dir="$${app_dir}/bin"
         nsenter -t 1 -m -- mkdir -p "$$bin_dir"
+        nsenter -t 1 -m -- mkdir -p "$$HOST_MNT_BASE/audiobooks" "$$HOST_MNT_BASE/podcasts" "$$HOST_MNT_BASE/ebooks"
         if ! nsenter -t 1 -m -- test -x "$$bin_dir/rclone"; then
           echo "fuse-share: installing rclone to $$bin_dir/rclone"
           arch="$$(uname -m)"
@@ -310,23 +312,11 @@ services:
     volumes:
       - abs_config:/config
       - abs_metadata:/metadata
+      # Bind parent mnt/ (not mnt/audiobooks) — Docker mkdir fails on FUSE mount points
       - type: bind
-        source: ./mnt/audiobooks
-        target: /audiobooks
+        source: ./mnt
+        target: /mnt
         bind:
-          create_host_path: false
-          propagation: rslave
-      - type: bind
-        source: ./mnt/podcasts
-        target: /podcasts
-        bind:
-          create_host_path: false
-          propagation: rslave
-      - type: bind
-        source: ./mnt/ebooks
-        target: /ebooks
-        bind:
-          create_host_path: false
           propagation: rslave
 
 volumes:
