@@ -162,7 +162,9 @@ For Storage Box, obscure the password first (`./scripts/obscure-password.sh '…
 |-------|--------|
 | Proxy | Use Coolify's proxy — do not run the stack's Caddy service |
 | Networks | Coolify compose files define **no** custom networks (required for Traefik) |
+| Media mounts | Bind mounts under `./mnt/…` with `rshared` propagation (named volumes cannot use `:shared`) |
 | FUSE | Server needs `/dev/fuse`. The rclone services use `cap_add: SYS_ADMIN`, `devices: [/dev/fuse]`, and `apparmor:unconfined` |
+| Empty libraries | If ABS cannot see files, on the Coolify host run `sudo mount --make-rshared /data/coolify` (or the parent of your app bind paths), then redeploy |
 | Raw mode | If Coolify strips devices/capabilities and mounts fail, enable **Raw Compose Deployment** |
 | Disk | Still a mount, not a sync. Lower `VFS_CACHE_MAX_SIZE` on small VPS disks |
 | Optional libs | Podcasts/ebooks mounts are included; delete those services from the compose if unused |
