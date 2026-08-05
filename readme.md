@@ -156,10 +156,12 @@ Yes — use the Coolify-specific compose files. Coolify already provides the rev
    - Optional: `VFS_CACHE_MAX_SIZE` (default `2G`)
 4. Assign your domain to the **audiobookshelf** service (listens on container port `80`).
 5. Deploy.
-6. In Audiobookshelf, add libraries pointing at:
-   - `/media/audiobooks`
-   - `/media/podcasts` (optional)
-   - `/media/ebooks` (optional)
+6. In Audiobookshelf: **Settings → Libraries → Add Library** and set the folder to one of:
+   - `/audiobooks`
+   - `/podcasts`
+   - `/ebooks`
+
+   Type the path if the browser does not show it. Do **not** use a host path like `/data/coolify/...`.
 
 Create those folders on the remote before the first scan. Storage Box: enable **SSH support** (port `23`).
 

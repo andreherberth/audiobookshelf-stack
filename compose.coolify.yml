@@ -5,39 +5,52 @@
 #   Docker Compose Location: /compose.coolify.yml
 #   Assign your domain to the "audiobookshelf" service
 #
-# No Coolify "content" file binds (they often become directories).
-# fuse.conf is written at container start.
+# In Audiobookshelf → Settings → Libraries → Add Library, use folder:
+#   /audiobooks   (books)
+#   /podcasts     (podcasts)
+#   /ebooks       (ebooks)
 #
-# If a previous deploy created fuse.conf/entrypoint.sh as directories, remove them:
-#   rm -rf /data/coolify/applications/<uuid>/fuse.conf \
-#          /data/coolify/applications/<uuid>/entrypoint.sh
-#
-# Libraries in ABS: /media/audiobooks, /media/podcasts, /media/ebooks
+# Create those prefixes in the S3 bucket first.
+
+x-rclone-env: &rclone-env
+  RCLONE_CONFIG_HETZNER_TYPE: s3
+  RCLONE_CONFIG_HETZNER_PROVIDER: Hetzner
+  RCLONE_CONFIG_HETZNER_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?}
+  RCLONE_CONFIG_HETZNER_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?}
+  RCLONE_CONFIG_HETZNER_ENDPOINT: ${S3_ENDPOINT:?}
+  RCLONE_CONFIG_HETZNER_REGION: ${S3_REGION:-fsn1}
+  S3_BUCKET: ${S3_BUCKET:?}
+  VFS_CACHE_MODE: ${VFS_CACHE_MODE:-full}
+  VFS_CACHE_MAX_SIZE: ${VFS_CACHE_MAX_SIZE:-2G}
+  VFS_CACHE_MAX_AGE: ${VFS_CACHE_MAX_AGE:-72h}
+  VFS_DIR_CACHE_TIME: ${VFS_DIR_CACHE_TIME:-72h}
+
+x-rclone-security: &rclone-security
+  privileged: true
+  cap_add:
+    - SYS_ADMIN
+  devices:
+    - /dev/fuse:/dev/fuse:rwm
+  security_opt:
+    - apparmor:unconfined
 
 services:
   rclone:
     image: rclone/rclone:latest
     restart: unless-stopped
-    privileged: true
+    <<: *rclone-security
     environment:
-      RCLONE_CONFIG_HETZNER_TYPE: s3
-      RCLONE_CONFIG_HETZNER_PROVIDER: Hetzner
-      RCLONE_CONFIG_HETZNER_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?}
-      RCLONE_CONFIG_HETZNER_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?}
-      RCLONE_CONFIG_HETZNER_ENDPOINT: ${S3_ENDPOINT:?}
-      RCLONE_CONFIG_HETZNER_REGION: ${S3_REGION:-fsn1}
-      S3_BUCKET: ${S3_BUCKET:?}
-      VFS_CACHE_MODE: ${VFS_CACHE_MODE:-full}
-      VFS_CACHE_MAX_SIZE: ${VFS_CACHE_MAX_SIZE:-2G}
-      VFS_CACHE_MAX_AGE: ${VFS_CACHE_MAX_AGE:-72h}
-      VFS_DIR_CACHE_TIME: ${VFS_DIR_CACHE_TIME:-72h}
+      <<: *rclone-env
+      RCLONE_REMOTE_SUBDIR: audiobooks
+      RCLONE_MOUNT_PATH: /mnt/audiobooks
     entrypoint: ["sh", "-c"]
     command:
       - |
         set -eu
         echo "user_allow_other" > /etc/fuse.conf
-        echo "rclone: mounting hetzner:$$S3_BUCKET -> /mnt/media"
-        exec rclone mount "hetzner:$$S3_BUCKET" /mnt/media \
+        remote="hetzner:$$S3_BUCKET/$$RCLONE_REMOTE_SUBDIR"
+        echo "rclone: mounting $$remote -> $$RCLONE_MOUNT_PATH"
+        exec rclone mount "$$remote" "$$RCLONE_MOUNT_PATH" \
           --allow-other \
           --allow-non-empty \
           --vfs-cache-mode "$$VFS_CACHE_MODE" \
@@ -46,22 +59,94 @@ services:
           --cache-dir /cache \
           --dir-cache-time "$$VFS_DIR_CACHE_TIME" \
           --log-level INFO
-    cap_add:
-      - SYS_ADMIN
-    devices:
-      - /dev/fuse:/dev/fuse:rwm
-    security_opt:
-      - apparmor:unconfined
     volumes:
       - rclone_cache:/cache
       - type: bind
-        source: ./mnt/media
-        target: /mnt/media
+        source: ./mnt/audiobooks
+        target: /mnt/audiobooks
         bind:
           propagation: rshared
         is_directory: true
     healthcheck:
-      test: ["CMD-SHELL", "grep -q ' /mnt/media ' /proc/mounts"]
+      test: ["CMD-SHELL", "grep -q ' /mnt/audiobooks ' /proc/mounts"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 90s
+
+  rclone-podcasts:
+    image: rclone/rclone:latest
+    restart: unless-stopped
+    <<: *rclone-security
+    environment:
+      <<: *rclone-env
+      RCLONE_REMOTE_SUBDIR: podcasts
+      RCLONE_MOUNT_PATH: /mnt/podcasts
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -eu
+        echo "user_allow_other" > /etc/fuse.conf
+        remote="hetzner:$$S3_BUCKET/$$RCLONE_REMOTE_SUBDIR"
+        echo "rclone: mounting $$remote -> $$RCLONE_MOUNT_PATH"
+        exec rclone mount "$$remote" "$$RCLONE_MOUNT_PATH" \
+          --allow-other \
+          --allow-non-empty \
+          --vfs-cache-mode "$$VFS_CACHE_MODE" \
+          --vfs-cache-max-size "$$VFS_CACHE_MAX_SIZE" \
+          --vfs-cache-max-age "$$VFS_CACHE_MAX_AGE" \
+          --cache-dir /cache \
+          --dir-cache-time "$$VFS_DIR_CACHE_TIME" \
+          --log-level INFO
+    volumes:
+      - rclone_cache_podcasts:/cache
+      - type: bind
+        source: ./mnt/podcasts
+        target: /mnt/podcasts
+        bind:
+          propagation: rshared
+        is_directory: true
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q ' /mnt/podcasts ' /proc/mounts"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 90s
+
+  rclone-ebooks:
+    image: rclone/rclone:latest
+    restart: unless-stopped
+    <<: *rclone-security
+    environment:
+      <<: *rclone-env
+      RCLONE_REMOTE_SUBDIR: ebooks
+      RCLONE_MOUNT_PATH: /mnt/ebooks
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -eu
+        echo "user_allow_other" > /etc/fuse.conf
+        remote="hetzner:$$S3_BUCKET/$$RCLONE_REMOTE_SUBDIR"
+        echo "rclone: mounting $$remote -> $$RCLONE_MOUNT_PATH"
+        exec rclone mount "$$remote" "$$RCLONE_MOUNT_PATH" \
+          --allow-other \
+          --allow-non-empty \
+          --vfs-cache-mode "$$VFS_CACHE_MODE" \
+          --vfs-cache-max-size "$$VFS_CACHE_MAX_SIZE" \
+          --vfs-cache-max-age "$$VFS_CACHE_MAX_AGE" \
+          --cache-dir /cache \
+          --dir-cache-time "$$VFS_DIR_CACHE_TIME" \
+          --log-level INFO
+    volumes:
+      - rclone_cache_ebooks:/cache
+      - type: bind
+        source: ./mnt/ebooks
+        target: /mnt/ebooks
+        bind:
+          propagation: rshared
+        is_directory: true
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q ' /mnt/ebooks ' /proc/mounts"]
       interval: 10s
       timeout: 5s
       retries: 18
@@ -79,8 +164,22 @@ services:
       - abs_config:/config
       - abs_metadata:/metadata
       - type: bind
-        source: ./mnt/media
-        target: /media
+        source: ./mnt/audiobooks
+        target: /audiobooks
+        read_only: true
+        bind:
+          propagation: rshared
+        is_directory: true
+      - type: bind
+        source: ./mnt/podcasts
+        target: /podcasts
+        read_only: true
+        bind:
+          propagation: rshared
+        is_directory: true
+      - type: bind
+        source: ./mnt/ebooks
+        target: /ebooks
         read_only: true
         bind:
           propagation: rshared
@@ -88,5 +187,7 @@ services:
 
 volumes:
   rclone_cache:
+  rclone_cache_podcasts:
+  rclone_cache_ebooks:
   abs_config:
   abs_metadata:
