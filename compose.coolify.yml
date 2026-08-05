@@ -7,8 +7,14 @@
 #   Docker Compose Location: /compose.coolify.yml
 #   Assign your domain to the "audiobookshelf" service
 #
+# Media paths use bind mounts with rshared propagation so the rclone FUSE
+# mount is visible to Audiobookshelf. Named volumes cannot use :shared
+# (Docker rejects BindOptions on volume mounts — Coolify deploy error).
+#
 # Host requirements: /dev/fuse available on the Coolify server.
 # If devices/cap_add are stripped, enable "Raw Compose Deployment".
+# If ABS sees empty libraries, on the host run:
+#   mount --make-rshared /data/coolify
 #
 # Media stays on Hetzner (mount, not sync). Tune VFS_CACHE_MAX_SIZE for small VPS disks.
 #
@@ -48,7 +54,12 @@ services:
       - apparmor:unconfined
     volumes:
       - rclone_cache:/cache
-      - media_audiobooks:/mnt/audiobooks:shared
+      - type: bind
+        source: ./mnt/audiobooks
+        target: /mnt/audiobooks
+        bind:
+          propagation: rshared
+        is_directory: true
     healthcheck:
       test: ["CMD", "mountpoint", "/mnt/audiobooks"]
       interval: 30s
@@ -90,7 +101,12 @@ services:
       - apparmor:unconfined
     volumes:
       - rclone_cache_podcasts:/cache
-      - media_podcasts:/mnt/podcasts:shared
+      - type: bind
+        source: ./mnt/podcasts
+        target: /mnt/podcasts
+        bind:
+          propagation: rshared
+        is_directory: true
     healthcheck:
       test: ["CMD", "mountpoint", "/mnt/podcasts"]
       interval: 30s
@@ -131,7 +147,12 @@ services:
       - apparmor:unconfined
     volumes:
       - rclone_cache_ebooks:/cache
-      - media_ebooks:/mnt/ebooks:shared
+      - type: bind
+        source: ./mnt/ebooks
+        target: /mnt/ebooks
+        bind:
+          propagation: rshared
+        is_directory: true
     healthcheck:
       test: ["CMD", "mountpoint", "/mnt/ebooks"]
       interval: 30s
@@ -150,9 +171,27 @@ services:
     volumes:
       - abs_config:/config
       - abs_metadata:/metadata
-      - media_audiobooks:/audiobooks:ro
-      - media_podcasts:/podcasts:ro
-      - media_ebooks:/ebooks:ro
+      - type: bind
+        source: ./mnt/audiobooks
+        target: /audiobooks
+        read_only: true
+        bind:
+          propagation: rshared
+        is_directory: true
+      - type: bind
+        source: ./mnt/podcasts
+        target: /podcasts
+        read_only: true
+        bind:
+          propagation: rshared
+        is_directory: true
+      - type: bind
+        source: ./mnt/ebooks
+        target: /ebooks
+        read_only: true
+        bind:
+          propagation: rshared
+        is_directory: true
     # Coolify proxies container port 80 — assign a domain to this service in the UI.
     # Do not publish host ports here.
 
@@ -160,8 +199,5 @@ volumes:
   rclone_cache:
   rclone_cache_podcasts:
   rclone_cache_ebooks:
-  media_audiobooks:
-  media_podcasts:
-  media_ebooks:
   abs_config:
   abs_metadata:
