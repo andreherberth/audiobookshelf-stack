@@ -3,23 +3,27 @@
 # In Coolify:
 #   Build Pack: Docker Compose
 #   Docker Compose Location: /compose.coolify.storagebox.yml
-#   Assign your domain to the "audiobookshelf" service
-#   Set STORAGEBOX_HOST / STORAGEBOX_USER / STORAGEBOX_PASS (plain password)
+#   Assign domain to "audiobookshelf"
+#   Env (typical for media/audiobooks layout):
+#     STORAGEBOX_HOST, STORAGEBOX_USER, STORAGEBOX_PASS (plain)
+#     STORAGEBOX_PATH=media/
+#     STORAGEBOX_AUDIOBOOKS_DIR=audiobooks
+#     STORAGEBOX_PODCASTS_DIR=podcast    # use "podcasts" if that is your folder name
+#     STORAGEBOX_EBOOKS_DIR=ebooks
 #
-# In Audiobookshelf → Settings → Libraries → Add Library, use folder:
-#   /audiobooks   (books)
-#   /podcasts     (podcasts)
-#   /ebooks       (ebooks)
+# ABS libraries: /audiobooks, /podcasts, /ebooks
 #
-# Create those directories on the Storage Box first (under STORAGEBOX_PATH).
-# Host FUSE share fix if folders look empty: sudo mount --make-rshared /data/coolify
+# If ABS and Storage Box stay out of sync, ABS was writing to a local folder
+# instead of FUSE. The fuse-share service runs mount --make-rshared on the host.
+# You can also run once on the Coolify server:
+#   sudo mount --make-rshared /data/coolify
 
 x-rclone-env: &rclone-env
   RCLONE_CONFIG_HETZNER_TYPE: sftp
   RCLONE_CONFIG_HETZNER_HOST: ${STORAGEBOX_HOST:?}
   RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER:?}
   STORAGEBOX_PASS: ${STORAGEBOX_PASS:?}
-  STORAGEBOX_PATH: ${STORAGEBOX_PATH:-}
+  STORAGEBOX_PATH: ${STORAGEBOX_PATH:-media/}
   RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
   RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
   RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
@@ -39,13 +43,35 @@ x-rclone-security: &rclone-security
     - apparmor:unconfined
 
 services:
+  # Make Coolify app bind mounts able to see FUSE mounts from rclone.
+  fuse-share:
+    image: alpine:3.20
+    restart: "no"
+    privileged: true
+    pid: host
+    exclude_from_hc: true
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -eu
+        apk add --no-cache util-linux >/dev/null
+        for p in /data/coolify /data/coolify/applications /; do
+          if [ -d "$$p" ]; then
+            nsenter -t 1 -m -- mount --make-rshared "$$p" && echo "rshared: $$p" || true
+          fi
+        done
+        echo "fuse-share: host mount propagation ready"
+
   rclone:
     image: rclone/rclone:latest
     restart: unless-stopped
     <<: *rclone-security
+    depends_on:
+      fuse-share:
+        condition: service_completed_successfully
     environment:
       <<: *rclone-env
-      RCLONE_REMOTE_SUBDIR: audiobooks
+      RCLONE_REMOTE_SUBDIR: ${STORAGEBOX_AUDIOBOOKS_DIR:-audiobooks}
       RCLONE_MOUNT_PATH: /mnt/audiobooks
     entrypoint: ["sh", "-c"]
     command:
@@ -84,9 +110,12 @@ services:
     image: rclone/rclone:latest
     restart: unless-stopped
     <<: *rclone-security
+    depends_on:
+      fuse-share:
+        condition: service_completed_successfully
     environment:
       <<: *rclone-env
-      RCLONE_REMOTE_SUBDIR: podcasts
+      RCLONE_REMOTE_SUBDIR: ${STORAGEBOX_PODCASTS_DIR:-podcast}
       RCLONE_MOUNT_PATH: /mnt/podcasts
     entrypoint: ["sh", "-c"]
     command:
@@ -125,9 +154,12 @@ services:
     image: rclone/rclone:latest
     restart: unless-stopped
     <<: *rclone-security
+    depends_on:
+      fuse-share:
+        condition: service_completed_successfully
     environment:
       <<: *rclone-env
-      RCLONE_REMOTE_SUBDIR: ebooks
+      RCLONE_REMOTE_SUBDIR: ${STORAGEBOX_EBOOKS_DIR:-ebooks}
       RCLONE_MOUNT_PATH: /mnt/ebooks
     entrypoint: ["sh", "-c"]
     command:
@@ -173,24 +205,22 @@ services:
     volumes:
       - abs_config:/config
       - abs_metadata:/metadata
+      # rw so uploads from ABS go to the Storage Box via FUSE (not local VPS disk)
       - type: bind
         source: ./mnt/audiobooks
         target: /audiobooks
-        read_only: true
         bind:
           propagation: rshared
         is_directory: true
       - type: bind
         source: ./mnt/podcasts
         target: /podcasts
-        read_only: true
         bind:
           propagation: rshared
         is_directory: true
       - type: bind
         source: ./mnt/ebooks
         target: /ebooks
-        read_only: true
         bind:
           propagation: rshared
         is_directory: true
