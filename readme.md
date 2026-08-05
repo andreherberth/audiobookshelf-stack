@@ -170,20 +170,29 @@ Yes — use the Coolify-specific compose files. Coolify already provides the rev
 
 Create those folders on the remote before the first scan. Storage Box: enable **SSH support** (port `23`).
 
-If uploads in ABS never appear on the Storage Box (or remote files never appear in ABS), ABS is using a **local VPS folder** while rclone FUSE is separate. Check:
+If uploads in ABS never appear on the Storage Box (or remote files never appear in ABS), ABS is using a **local VPS folder** while rclone FUSE is separate.
+
+**Required once on the Coolify host before a working deploy:**
 
 ```bash
-# on host — find the real mountpoint ( /data/coolify itself often is NOT one )
+# 1) make the filesystem shared ( /data/coolify itself is often NOT a mountpoint )
 findmnt -T /data/coolify
 sudo mount --make-rshared "$(findmnt -n -o TARGET -T /data/coolify)"
 
-# clear local shadow files that ABS wrote to the VPS (NOT on the Storage Box)
+# 2) delete local shadow files ABS wrote on the VPS
 sudo find /data/coolify/applications/w2cqu8zgqq5hw35ol4fzkanb/mnt -mindepth 1 -delete
 ```
 
-Then redeploy and rescan. In the containers, `/mnt/audiobooks` (rclone) and `/audiobooks` (ABS) should show the **same** listing.
+Optional but recommended in Coolify env:
+```
+HOST_MNT_BASE=/data/coolify/applications/w2cqu8zgqq5hw35ol4fzkanb/mnt
+```
 
-Also confirm: if `/audiobooks` has files but rclone `/mnt/audiobooks` is empty, those ABS files are only on the VPS — copy them to the Storage Box if you need them, then clear the local `mnt/` dirs as above.
+Then redeploy. rclone logs should show mounts like:
+`/data/coolify/applications/…/mnt/audiobooks`
+and ABS `/audiobooks` must list the **same** files as the Storage Box.
+
+If rclone exits with “has local VPS files”, step 2 was skipped — clear `mnt/` and redeploy again.
 
 ### Coolify notes
 
