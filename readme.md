@@ -153,6 +153,7 @@ Yes — use the Coolify-specific compose files. Coolify already provides the rev
 3. Fill environment variables in the Coolify UI:
    - Object Storage: `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_ENDPOINT`, `S3_BUCKET`, …
    - Storage Box: `STORAGEBOX_HOST`, `STORAGEBOX_USER`, **`STORAGEBOX_PASS` as the plain password**
+   - Storage Box **required**: `HOST_MNT_BASE=/data/coolify/applications/<uuid>/mnt` (no default — short `:rshared` syntax breaks Compose when this path is set)
    - For a `media/audiobooks` layout on the box:
      - `STORAGEBOX_PATH=media/`
      - `STORAGEBOX_AUDIOBOOKS_DIR=audiobooks`
@@ -205,13 +206,15 @@ Then redeploy. rclone logs should show `mounting … -> /mnt/audiobooks` (no Per
 |-------|--------|
 | Proxy | Use Coolify's proxy — do not run the stack's Caddy service |
 | Networks | Coolify compose files define **no** custom networks (required for Traefik) |
-| Media mounts | Bind mounts under `./mnt/{audiobooks,podcasts,ebooks}` with `rshared` |
-| FUSE share | `fuse-share` init runs `mount --make-rshared` on `/data/coolify` so ABS sees rclone |
+| Media mounts | Long-syntax binds from `$HOST_MNT_BASE/{audiobooks,podcasts,ebooks}` with `propagation: rshared` |
+| `HOST_MNT_BASE` | **Required** for Storage Box Coolify compose (absolute Coolify app `mnt` path) |
+| FUSE share | `fuse-share` init runs `mount --make-rshared` on a real mountpoint covering `/data/coolify` |
 | FUSE | `privileged: true`, `/dev/fuse`; `user_allow_other` written at container start (no fuse.conf bind) |
 | Healthcheck | Uses `/proc/mounts` (rclone image may not include `mountpoint`) |
 | Password | Coolify Storage Box compose expects a **plain** `STORAGEBOX_PASS` |
 | Paths | Default remote prefix `media/` + dirs `audiobooks` / `podcast` / `ebooks` (override via env) |
 | Leftover dirs | If an older deploy created `fuse.conf`/`entrypoint.sh` as directories under the app path, delete them before redeploying |
+| Build `::` error | `invalid spec: …/mnt:: empty section between colons` ⇒ use this compose (long bind syntax); set `HOST_MNT_BASE` |
 | Empty / no sync | ABS `/audiobooks` has files but rclone `/mnt/audiobooks` empty ⇒ local VPS shadow. `mount --make-rshared "$(findmnt -n -o TARGET -T /data/coolify)"`, delete `…/mnt/*`, redeploy |
 | Raw mode | If Coolify strips devices/capabilities and mounts still fail, enable **Raw Compose Deployment** |
 | Disk | Still a mount, not a sync. Lower `VFS_CACHE_MAX_SIZE` on small VPS disks |
