@@ -154,7 +154,13 @@ services:
         app_dir="$$(dirname "$$HOST_MNT_BASE")"
         bin_dir="$${app_dir}/bin"
         nsenter -t 1 -m -- mkdir -p "$$bin_dir"
-        nsenter -t 1 -m -- mkdir -p "$$HOST_MNT_BASE/audiobooks" "$$HOST_MNT_BASE/podcasts" "$$HOST_MNT_BASE/ebooks"
+        # Only ensure parent mnt/ exists; subdirs may already be FUSE mounts from a prior deploy
+        if nsenter -t 1 -m -- findmnt -M "$$HOST_MNT_BASE" >/dev/null 2>&1; then
+          echo "fuse-share: $$HOST_MNT_BASE is a mountpoint — skip mkdir"
+        else
+          nsenter -t 1 -m -- mkdir -p "$$HOST_MNT_BASE" \
+            || echo "fuse-share: WARNING could not mkdir $$HOST_MNT_BASE"
+        fi
         if ! nsenter -t 1 -m -- test -x "$$bin_dir/rclone"; then
           echo "fuse-share: installing rclone to $$bin_dir/rclone"
           arch="$$(uname -m)"
@@ -180,7 +186,7 @@ services:
             && echo "fuse-share: rshared OK -> $$mp" \
             || echo "fuse-share: FAILED $$mp"
         done
-        nsenter -t 1 -m -- sh -c 'grep -q "^user_allow_other" /etc/fuse.conf 2>/dev/null || echo user_allow_other >> /etc/fuse.conf'
+        nsenter -t 1 -m -- sh -c 'grep -q "^user_allow_other" /etc/fuse.conf 2>/dev/null || echo user_allow_other >> /etc/fuse.conf' || true
         nsenter -t 1 -m -- sh -c '
           if command -v apt-get >/dev/null 2>&1; then
             command -v fusermount3 >/dev/null 2>&1 || (
@@ -219,7 +225,7 @@ services:
           fi
         else
           echo "fuse-share: no host fusermount3 profile — skip apparmor local"
-        fi'
+        fi' || true
         echo "fuse-share: done"
 
   rclone:
