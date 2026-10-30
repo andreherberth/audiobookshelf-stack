@@ -175,7 +175,9 @@ Coolify 4.5 keeps long bind options (`propagation`, `create_host_path: false`) a
 
 Create those folders on the remote before the first scan. Storage Box: enable **SSH support** and, from outside the Hetzner network, **external reachability** (port `23`).
 
-`fuse-share` runs once per deploy. It makes the Coolify data mount shared, enables `user_allow_other`, installs host `fuse3` and rclone, and adds the fusermount3 AppArmor snippet for `/data/coolify`. **Exited (0)** after `fuse-share: done` is success. If it exits non-zero, the log line starting with `fuse-share: FATAL` is the reason (the data mount could not be made shared, or the host has no `fusermount`). In-container `fusermount` still cannot mount on `/data/coolify` paths, so rclone mounts in the host mount namespace.
+`fuse-share` runs once per deploy. It makes the Coolify data mount shared, enables `user_allow_other`, installs host `fuse3` and rclone, lazy-unmounts leftover FUSE mounts under the app `mnt` directory, and adds the fusermount3 AppArmor snippet for `/data/coolify`. **Exited (0)** after `fuse-share: done` is success. If it exits non-zero, the log line starting with `fuse-share: FATAL` is the reason (the data mount could not be made shared, or the host has no `fusermount`). In-container `fusermount` still cannot mount on `/data/coolify` paths, so rclone mounts in the host mount namespace.
+
+Audiobookshelf bind-mounts that `mnt` directory and links `/audiobooks`, `/podcasts`, and `/ebooks` only after those mounts show up inside the container. Leave `HOST_MNT_BASE` empty so the mounts land in the same directory. Binding a library folder itself fails on the next deploy: stopping rclone leaves the old mount disconnected, and Docker refuses to create the container (`transport endpoint is not connected`) before the new mount exists.
 
 Podcast and ebook containers start only after the audiobooks mount is healthy, so a wrong password or a blocked server is one SSH attempt per backoff window.
 
@@ -188,8 +190,8 @@ If uploads in ABS never appear on the Storage Box (or remote files never appear 
 | Version | Coolify **4.5.0+** |
 | Proxy | Domains UI on **audiobookshelf**, internal port 80. Raw Compose stays off |
 | Networks | Coolify compose files define **no** custom networks (required for the proxy) |
-| Media mounts | rclone FUSE on the **host** under `/data/coolify/applications/<uuid>/mnt`; ABS binds `./mnt/…` after the audiobooks mount is healthy |
-| `HOST_MNT_BASE` | Optional. Default is `/data/coolify/applications/$COOLIFY_RESOURCE_UUID/mnt` |
+| Media mounts | rclone FUSE on the **host** under `/data/coolify/applications/<uuid>/mnt`. ABS bind-mounts `./mnt` with `rslave` and links `/audiobooks`, `/podcasts`, and `/ebooks` once those mounts are visible |
+| `HOST_MNT_BASE` | Leave empty. The default is `/data/coolify/applications/$COOLIFY_RESOURCE_UUID/mnt`, which is the directory ABS bind-mounts |
 | `fuse-share` | One-shot. Applies rshared, `user_allow_other`, fuse3, and the AppArmor snippet. `exclude_from_hc` so Exited (0) is not an application failure |
 | Upload not on box | ABS wrote to a local VPS shadow. Confirm `HOST mounting` in the rclone log, clear `…/mnt/*`, redeploy |
 | rclone unhealthy | Open **rclone** logs. A blocked login waits `STORAGEBOX_BAN_BACKOFF`. A bad password waits `STORAGEBOX_AUTH_BACKOFF` |

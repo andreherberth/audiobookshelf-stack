@@ -15,13 +15,21 @@
 #   STORAGEBOX_AUDIOBOOKS_DIR=audiobooks
 #   STORAGEBOX_PODCASTS_DIR=podcast
 #   STORAGEBOX_EBOOKS_DIR=ebooks
-#   HOST_MNT_BASE        override; default /data/coolify/applications/$$COOLIFY_RESOURCE_UUID/mnt
+#   HOST_MNT_BASE        leave empty. Default is the app mnt dir, which ABS bind-mounts.
 #   STORAGEBOX_BAN_BACKOFF=15m
 #   STORAGEBOX_AUTH_BACKOFF=10m
 # ABS library folders (inside the container): /audiobooks /podcasts /ebooks
 #
+# Audiobookshelf bind-mounts ./mnt, not the FUSE mount points under it.
+# Docker stats each bind source when the container is created, before rclone
+# starts. A previous deploy leaves those points disconnected ("transport
+# endpoint is not connected") and creating the container fails. The ABS
+# entrypoint waits until the new mounts appear under /mnt, then links them
+# to /audiobooks, /podcasts, and /ebooks.
+#
 # fuse-share makes the Coolify data mount rshared, enables user_allow_other,
-# installs host fuse3 and rclone, and adds the fusermount3 AppArmor snippet.
+# installs host fuse3 and rclone, drops leftover FUSE mounts, and adds the
+# fusermount3 AppArmor snippet.
 # A failed rshared or a missing host fusermount stops the deploy.
 # Podcast and ebook mounts start only after the audiobooks mount is healthy,
 # so a rejected login is one SSH attempt per backoff window.
@@ -43,7 +51,6 @@ x-rclone-common: &rclone-common
   configs:
     - source: storagebox-mount
       target: /storagebox-mount.sh
-      mode: "0555"
   environment: &rclone-env
     RCLONE_CONFIG_HETZNER_TYPE: sftp
     RCLONE_CONFIG_HETZNER_HOST: ${STORAGEBOX_HOST:?}
@@ -97,7 +104,7 @@ services:
     command:
       - |
         set -eu
-        echo "fuse-share: start script=v4-fuse-share"
+        echo "fuse-share: start script=v5-stale-unmount"
         apk add --no-cache util-linux curl unzip ca-certificates >/dev/null
         base="$${HOST_MNT_BASE:-}"
         if [ -z "$$base" ]; then
@@ -171,6 +178,8 @@ services:
           exit 1
         fi
         echo "fuse-share: host fusermount=$$fusermount"
+        echo "fuse-share: clearing stale mounts under $$base"
+        nsenter -t 1 -m -- sh -c 'base="$$1"; cmd="$$2"; grep -F " $${base}/" /proc/mounts | sed "s/[^ ]* //; s/ .*//" | sort -r | while read -r mp; do echo "fuse-share: unmount $$mp"; "$$cmd" -uz "$$mp" 2>/dev/null || umount -l "$$mp" 2>/dev/null || true; done' sh "$$base" "$$fusermount" || true
         nsenter -t 1 -m -- sh -c 'ls -l /dev/fuse' >/dev/null 2>&1 \
           || echo "fuse-share: WARNING /dev/fuse missing on host"
         nsenter -t 1 -m -- sh -c 'if [ -f /etc/apparmor.d/fusermount3 ]; then
@@ -241,31 +250,51 @@ services:
         condition: service_healthy
       rclone-ebooks:
         condition: service_healthy
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -eu
+        path="$${STORAGEBOX_PATH:-media/}"
+        case "$$path" in
+          */) ;;
+          *) path="$$path/" ;;
+        esac
+        for sub in audiobooks podcasts ebooks; do
+          target="/mnt/$${path}$${sub}"
+          i=0
+          # A stopped rclone leaves the old mount listed and disconnected.
+          while ! grep -Fq " $$target " /proc/mounts || ! ls "$$target" >/dev/null 2>&1; do
+            i=$$((i+1))
+            if [ "$$i" -gt 30 ]; then
+              echo "abs: FATAL $$target is not a live mount. Host FUSE did not propagate into this container."
+              echo "abs: mounts:"
+              grep -F /mnt /proc/mounts || true
+              exit 1
+            fi
+            sleep 1
+          done
+          if [ -d "/$$sub" ] && [ ! -L "/$$sub" ]; then
+            rm -rf "/$$sub"
+          fi
+          ln -sfn "$$target" "/$$sub"
+          echo "abs: $$target -> /$$sub"
+        done
+        cd /app
+        exec tini -- node dist-server/index.js
     environment:
       TZ: ${TZ:-UTC}
+      STORAGEBOX_PATH: ${STORAGEBOX_PATH:-media/}
     expose:
       - "80"
     volumes:
       - abs_config:/config
       - abs_metadata:/metadata
-      # Bind each FUSE mount point. Binding the parent mnt/ shows empty dirs.
+      # Bind the parent. Docker stats this path at create time, before rclone
+      # has replaced a disconnected FUSE child. rslave picks up the new mounts.
       - type: bind
-        source: ./mnt/media/audiobooks
-        target: /audiobooks
+        source: ./mnt
+        target: /mnt
         bind:
-          create_host_path: false
-          propagation: rslave
-      - type: bind
-        source: ./mnt/media/podcasts
-        target: /podcasts
-        bind:
-          create_host_path: false
-          propagation: rslave
-      - type: bind
-        source: ./mnt/media/ebooks
-        target: /ebooks
-        bind:
-          create_host_path: false
           propagation: rslave
 
 configs:

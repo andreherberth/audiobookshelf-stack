@@ -100,12 +100,42 @@ if data["services"]["rclone"]["environment"].get("COOLIFY_RESOURCE_UUID") != "ab
 cmd = data["services"]["fuse-share"]["command"]
 text = cmd if isinstance(cmd, str) else "\n".join(cmd)
 text = text.replace("$$", "$")
+if "clearing stale mounts" not in text:
+    sys.stderr.write("fuse-share must lazy-unmount leftover FUSE mounts\n")
+    sys.exit(1)
 path = pathlib.Path("/tmp/fuse-share.sh")
 path.write_text(text)
+abs = data["services"]["audiobookshelf"]
+targets = []
+for vol in abs.get("volumes") or []:
+    if isinstance(vol, str):
+        targets.append(vol.rsplit(":", 1)[-1])
+    else:
+        targets.append(vol.get("target"))
+if "/mnt" not in targets:
+    sys.stderr.write(f"audiobookshelf must bind /mnt, got {targets}\n")
+    sys.exit(1)
+for forbidden in ("/audiobooks", "/podcasts", "/ebooks"):
+    if forbidden in targets:
+        sys.stderr.write(f"audiobookshelf must not bind {forbidden}\n")
+        sys.exit(1)
+entry = abs.get("entrypoint") or []
+entry_text = entry if isinstance(entry, str) else " ".join(entry)
+if "sh" not in entry_text:
+    sys.stderr.write(f"audiobookshelf entrypoint must be sh: {entry}\n")
+    sys.exit(1)
+abs_cmd = abs.get("command")
+abs_text = abs_cmd if isinstance(abs_cmd, str) else "\n".join(abs_cmd or [])
+if "tini" not in abs_text or "did not propagate" not in abs_text:
+    sys.stderr.write("audiobookshelf command missing mount wait\n")
+    sys.exit(1)
+pathlib.Path("/tmp/abs-entrypoint.sh").write_text(abs_text.replace("$$", "$"))
 print("ok embedded script and service graph")
 PY
 sh -n /tmp/fuse-share.sh
 echo "ok fuse-share syntax"
+sh -n /tmp/abs-entrypoint.sh
+echo "ok audiobookshelf entrypoint syntax"
 
 docker compose -f compose.yml -f compose.storagebox.yml --profile podcasts --profile ebooks config >/dev/null
 docker compose -f compose.core.yml -f compose.storagebox.yml --profile podcasts --profile ebooks config >/dev/null
