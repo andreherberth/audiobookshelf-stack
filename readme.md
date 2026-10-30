@@ -74,7 +74,7 @@ rclone copy ./my-book/ storagebox:audiobooks/my-book/
 rsync -e 'ssh -p23' -av ./my-book/ uXXXXX@uXXXXX.your-storagebox.de:audiobooks/my-book/
 ```
 
-Storage Box accounts allow a limited number of simultaneous connections (typically 10). The Storage Box overlay caps rclone checkers to stay within that limit.
+Storage Box accounts allow a limited number of simultaneous connections (typically 10). The Storage Box overlay caps rclone checkers to stay within that limit. If the box rejects the password or blocks this server, the mount script waits (`STORAGEBOX_AUTH_BACKOFF`, default 10 minutes, or `STORAGEBOX_BAN_BACKOFF`, default 15 minutes) instead of reconnecting immediately. Podcast and ebook mounts start only after the audiobooks mount is healthy.
 
 ## Compose files
 
@@ -83,8 +83,8 @@ Storage Box accounts allow a limited number of simultaneous connections (typical
 | `compose.yml` | **Default** — Object Storage FUSE mount + Audiobookshelf + Caddy |
 | `compose.core.yml` | Sidecar stack without proxy (exposes port `13378`) |
 | `compose.storagebox.yml` | Overlay — mounts Storage Box via SFTP instead of S3 |
-| `compose.coolify.yml` | **Coolify** — Object Storage mount (no Caddy / no custom networks) |
-| `compose.coolify.storagebox.yml` | **Coolify** — Storage Box SFTP mount |
+| `compose.coolify.yml` | **Coolify 4.5+** — Object Storage mount (no Caddy / no custom networks) |
+| `compose.coolify.storagebox.yml` | **Coolify 4.5+** — Storage Box SFTP mount |
 | `compose.caddy.yml` | Caddy overlay — pairs with any core file |
 | `compose.rclone-plugin.yml` | Plugin stack + Caddy (all-in-one) |
 | `compose.rclone-plugin.core.yml` | Plugin stack without proxy |
@@ -142,7 +142,9 @@ Create `audiobooks`, `podcasts`, and `ebooks` prefixes on the remote before star
 
 ## Coolify
 
-Yes — use the Coolify-specific compose files. Coolify already provides the reverse proxy, so these files omit Caddy, custom networks, fixed `container_name`s, and host port publishes.
+Use the Coolify compose files on **Coolify 4.5.0 or newer**. Coolify already provides the reverse proxy, so these files omit Caddy, custom networks, fixed `container_name`s, and host port publishes.
+
+Coolify 4.5 keeps long bind options (`propagation`, `create_host_path: false`) and the service settings this stack needs (`privileged`, `devices`, `pid: host`). Leave **Raw Compose** off and assign the domain in the Domains UI. You do not copy the application UUID or run host `mount` / `fuse.conf` commands by hand.
 
 ### Deploy
 
@@ -150,80 +152,53 @@ Yes — use the Coolify-specific compose files. Coolify already provides the rev
 2. Set **Docker Compose Location** to one of:
    - `/compose.coolify.yml` — Hetzner Object Storage (S3)
    - `/compose.coolify.storagebox.yml` — Hetzner Storage Box (SFTP mount)
-3. Fill environment variables in the Coolify UI:
+3. Leave **Raw Compose Deployment** off.
+4. Fill environment variables in the Coolify UI:
    - Object Storage: `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_ENDPOINT`, `S3_BUCKET`, …
-   - Storage Box: `STORAGEBOX_HOST`, `STORAGEBOX_USER`, **`STORAGEBOX_PASS` as the plain password**
-   - Storage Box **required**: `HOST_MNT_BASE=/data/coolify/applications/<uuid>/mnt` (used by rclone host mounts; not a volume source)
+   - Storage Box: `STORAGEBOX_HOST`, `STORAGEBOX_USER`, and **`STORAGEBOX_PASS` as the plain password**
+   - Or set `STORAGEBOX_KEY_PEM` to an OpenSSH private key (port 23, `\n` between lines) and leave the password empty. The password is not sent when a key is set.
    - For a `media/audiobooks` layout on the box:
      - `STORAGEBOX_PATH=media/`
      - `STORAGEBOX_AUDIOBOOKS_DIR=audiobooks`
      - `STORAGEBOX_PODCASTS_DIR=podcast` (or `podcasts` if that is the folder name)
      - `STORAGEBOX_EBOOKS_DIR=ebooks`
-   - Optional: `VFS_CACHE_MAX_SIZE` (default `2G`)
-   - Do **not** put `${…}` in volume paths — Coolify rejects that. Compose uses literal `./mnt/…` (mapped to the app `mnt` dir).
-4. Assign your domain:
-   - With **Raw Compose** (required for host FUSE): set `AUDIOBOOKSHELF_HOST=books.example.com` (hostname only) in env — Traefik labels use it.
-   - Without Raw: Domains UI on **audiobookshelf** may work, but FUSE host mounts often need Raw.
-5. Deploy.
-6. In Audiobookshelf: **Settings → Libraries → Add Library** and set the folder to one of:
+   - Optional: `VFS_CACHE_MAX_SIZE` (default `2G`), `STORAGEBOX_BAN_BACKOFF` (default `15m`), `STORAGEBOX_AUTH_BACKOFF` (default `10m`)
+   - Optional override: `HOST_MNT_BASE`. When empty, the mount uses `/data/coolify/applications/<COOLIFY_RESOURCE_UUID>/mnt`.
+5. **Domains**: add the hostname on the **audiobookshelf** service. Set the internal port to `80` (`https://books.example.com:80` in the Coolify field). Coolify writes the proxy labels.
+6. Deploy.
+7. In Audiobookshelf: **Settings → Libraries → Add Library** and set the folder to one of:
    - `/audiobooks`
    - `/podcasts`
    - `/ebooks`
 
    Type the path if the browser does not show it. Do **not** use a host path like `/data/coolify/...`.
 
-Create those folders on the remote before the first scan. Storage Box: enable **SSH support** (port `23`).
+Create those folders on the remote before the first scan. Storage Box: enable **SSH support** and, from outside the Hetzner network, **external reachability** (port `23`).
 
-If uploads in ABS never appear on the Storage Box (or remote files never appear in ABS), ABS is using a **local VPS folder** while rclone FUSE is separate.
+`fuse-share` runs once per deploy. It makes the Coolify data mount shared, enables `user_allow_other`, installs host `fuse3` and rclone, and adds the fusermount3 AppArmor snippet for `/data/coolify`. **Exited (0)** after `fuse-share: done` is success. If it exits non-zero, the log line starting with `fuse-share: FATAL` is the reason (the data mount could not be made shared, or the host has no `fusermount`). In-container `fusermount` still cannot mount on `/data/coolify` paths, so rclone mounts in the host mount namespace.
 
-**Required once on the Coolify host before a working deploy:**
+Podcast and ebook containers start only after the audiobooks mount is healthy, so a wrong password or a blocked server is one SSH attempt per backoff window.
 
-```bash
-# 1) make the filesystem shared ( /data/coolify itself is often NOT a mountpoint )
-findmnt -T /data/coolify
-sudo mount --make-rshared "$(findmnt -n -o TARGET -T /data/coolify)"
-
-# 2) allow FUSE allow_other
-grep -q user_allow_other /etc/fuse.conf 2>/dev/null || echo user_allow_other | sudo tee -a /etc/fuse.conf
-
-# 3) delete local shadow files ABS wrote on the VPS
-sudo find /data/coolify/applications/w2cqu8zgqq5hw35ol4fzkanb/mnt -mindepth 1 -delete
-```
-
-In Coolify env set (example):
-```
-HOST_MNT_BASE=/data/coolify/applications/w2cqu8zgqq5hw35ol4fzkanb/mnt
-AUDIOBOOKSHELF_HOST=books.example.com
-STORAGEBOX_PATH=media/
-STORAGEBOX_AUDIOBOOKS_DIR=audiobooks
-STORAGEBOX_PODCASTS_DIR=podcast
-STORAGEBOX_EBOOKS_DIR=ebooks
-```
-
-rclone mounts Storage Box on the **host** via `nsenter` (in-container `fusermount` fails on Coolify paths). Enable **Raw Compose Deployment**. ABS binds `./mnt/…` after audiobooks mount is healthy.
-
-If rclone logs `fusermount3: Permission denied` or `/dev/fuse missing`, confirm **Raw Compose Deployment** is enabled.
+If uploads in ABS never appear on the Storage Box (or remote files never appear in ABS), ABS is using a **local VPS folder** while rclone FUSE is separate. Confirm rclone logs say `HOST mounting`, then clear leftover files under the app `mnt/` directory and redeploy.
 
 ### Coolify notes
 
 | Topic | Detail |
 |-------|--------|
-| Proxy | Raw Compose: set `AUDIOBOOKSHELF_HOST` (Traefik labels). Non-raw: Coolify Domains on **audiobookshelf** |
-| Domains missing | Expected with Raw Compose — use `AUDIOBOOKSHELF_HOST` instead of the Domains UI |
-| Networks | Coolify compose files define **no** custom networks (required for Traefik) |
-| Media mounts | rclone FUSE on **host** at `$HOST_MNT_BASE/…`; ABS binds `./mnt/…` after audiobooks mount is healthy |
-| `HOST_MNT_BASE` | **Required** env (not a volume source): `/data/coolify/applications/<uuid>/mnt` |
-| Upload not on box | ABS wrote to local VPS shadow. Confirm rclone logs say `HOST mounting`, set `HOST_MNT_BASE`, clear `…/mnt/*`, redeploy |
-| rclone unhealthy | Open **rclone** logs. Often missing Raw Compose, bad `HOST_MNT_BASE`, or bad remote folder (`podcast` vs `podcasts`) |
-| Raw mode | **Required** for host FUSE (`privileged` / `pid:host` / `/dev/fuse`); use `AUDIOBOOKSHELF_HOST` for domains |
-| FUSE | `privileged: true`, `/dev/fuse`, `pid: host`; alpine downloads rclone binary at start |
-| Healthcheck | Greps host `/proc/1/mounts` for `$HOST_MNT_BASE/<lib>` |
-| Password | Coolify Storage Box compose expects a **plain** `STORAGEBOX_PASS` |
+| Version | Coolify **4.5.0+** |
+| Proxy | Domains UI on **audiobookshelf**, internal port 80. Raw Compose stays off |
+| Networks | Coolify compose files define **no** custom networks (required for the proxy) |
+| Media mounts | rclone FUSE on the **host** under `/data/coolify/applications/<uuid>/mnt`; ABS binds `./mnt/…` after the audiobooks mount is healthy |
+| `HOST_MNT_BASE` | Optional. Default is `/data/coolify/applications/$COOLIFY_RESOURCE_UUID/mnt` |
+| `fuse-share` | One-shot. Applies rshared, `user_allow_other`, fuse3, and the AppArmor snippet. `exclude_from_hc` so Exited (0) is not an application failure |
+| Upload not on box | ABS wrote to a local VPS shadow. Confirm `HOST mounting` in the rclone log, clear `…/mnt/*`, redeploy |
+| rclone unhealthy | Open **rclone** logs. A blocked login waits `STORAGEBOX_BAN_BACKOFF`. A bad password waits `STORAGEBOX_AUTH_BACKOFF` |
+| Blocked login | Hetzner (and similar boxes) block the server IP after repeated failures, often for about 15 minutes. Further attempts extend the block. The log tells you to enable SSH support and external reachability, then wait |
+| FUSE | `privileged: true`, `/dev/fuse`, `pid: host`. Host rclone is installed by `fuse-share` |
+| Healthcheck | Greps host `/proc/1/mounts` for the library path |
+| Password | Coolify expects a **plain** `STORAGEBOX_PASS`. If the value is already rclone-obscured, the script tries it once without obscuring it again |
+| Key | Optional `STORAGEBOX_KEY_PEM`. When set, the password is not sent |
 | Paths | Default remote prefix `media/` + dirs `audiobooks` / `podcast` / `ebooks` (override via env) |
-| Leftover dirs | If an older deploy created `fuse.conf`/`entrypoint.sh` as directories under the app path, delete them before redeploying |
-| Build `${` error | Coolify rejects `${…}` in volume sources — use literal `./mnt/…` (this compose) |
-| Build `::` error | Short `:rshared` syntax + absolute paths can yield `mnt::` — use long bind syntax |
-| Empty / no sync | ABS `/audiobooks` has files but Storage Box empty ⇒ local VPS shadow. Clear `…/mnt/*`, confirm `HOST mounting` in logs, redeploy |
 | Disk | Still a mount, not a sync. Lower `VFS_CACHE_MAX_SIZE` on small VPS disks |
 | Logs | Check `rclone` logs for `HOST mounting hetzner:media/audiobooks` |
 
@@ -310,7 +285,10 @@ labels:
 | `S3_BUCKET` | Bucket name |
 | `STORAGEBOX_HOST` | e.g. `uXXXXX.your-storagebox.de` |
 | `STORAGEBOX_USER` | Storage Box username (or sub-account) |
-| `STORAGEBOX_PASS` | **rclone-obscured** password (`./scripts/obscure-password.sh`) |
+| `STORAGEBOX_PASS` | Local compose: **rclone-obscured** password (`./scripts/obscure-password.sh`). Coolify: **plain** password |
+| `STORAGEBOX_KEY_PEM` | Optional OpenSSH private key (port 23). `\n` for line breaks. When set, the password is not sent |
+| `STORAGEBOX_BAN_BACKOFF` | Wait after the storage box blocks this server (default `15m`) |
+| `STORAGEBOX_AUTH_BACKOFF` | Wait after a rejected password or key (default `10m`) |
 | `STORAGEBOX_PORT` | SSH/SFTP port (default `23`) |
 | `STORAGEBOX_PATH` | Prefix on the box with trailing slash (Coolify default `media/`) |
 | `STORAGEBOX_AUDIOBOOKS_DIR` | Remote folder name for books (default `audiobooks`) |
@@ -346,7 +324,7 @@ See [rclone/rclone.conf.example](rclone/rclone.conf.example). Copy to `/var/lib/
 - Bound `VFS_CACHE_MAX_SIZE` to what your VPS can spare (per mount: audiobooks, plus podcasts/ebooks if enabled).
 - First library scans can be slow while directory listings and the VFS cache warm up.
 - Object Storage / Storage Box sidecar credentials come from `.env`. The plugin variant reads remotes from host `rclone.conf`.
-- Storage Box: enable **SSH support** in the console; SFTP uses **port 23**. Prefer an SSH key in the plugin `rclone.conf` (`key_file`) when you can.
+- Storage Box: enable **SSH support** in the console; SFTP uses **port 23**. From outside the Hetzner network, also enable **external reachability**. Prefer an SSH key (`STORAGEBOX_KEY_PEM`, or `key_file` in the plugin `rclone.conf`) when you can. A blocked login waits out the block instead of retrying every few seconds.
 
 ## Stack comparison
 

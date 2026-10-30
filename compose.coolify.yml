@@ -1,9 +1,9 @@
-# Coolify-compatible stack: Object Storage FUSE mount (S3) + Audiobookshelf.
+# Coolify 4.5+ Object Storage FUSE mount (S3) + Audiobookshelf.
 #
-# In Coolify:
-#   Build Pack: Docker Compose
-#   Docker Compose Location: /compose.coolify.yml
-#   Assign your domain to the "audiobookshelf" service
+# Build pack: Docker Compose
+# Docker Compose location: /compose.coolify.yml
+# Raw Compose: leave off. Coolify 4.5 keeps privileged, /dev/fuse, and bind propagation.
+# Domain: Coolify Domains UI on the audiobookshelf service (internal port 80).
 #
 # In Audiobookshelf → Settings → Libraries → Add Library, use folder:
 #   /audiobooks   (books)
@@ -11,6 +11,7 @@
 #   /ebooks       (ebooks)
 #
 # Create those prefixes in the S3 bucket first.
+# create_host_path: false keeps a redeploy from replacing a live FUSE mount with an empty directory.
 
 x-rclone-env: &rclone-env
   RCLONE_CONFIG_HETZNER_TYPE: s3
@@ -65,8 +66,8 @@ services:
         source: ./mnt/audiobooks
         target: /mnt/audiobooks
         bind:
+          create_host_path: false
           propagation: rshared
-        is_directory: true
     healthcheck:
       test: ["CMD-SHELL", "grep -q ' /mnt/audiobooks ' /proc/mounts"]
       interval: 10s
@@ -104,8 +105,8 @@ services:
         source: ./mnt/podcasts
         target: /mnt/podcasts
         bind:
+          create_host_path: false
           propagation: rshared
-        is_directory: true
     healthcheck:
       test: ["CMD-SHELL", "grep -q ' /mnt/podcasts ' /proc/mounts"]
       interval: 10s
@@ -143,8 +144,8 @@ services:
         source: ./mnt/ebooks
         target: /mnt/ebooks
         bind:
+          create_host_path: false
           propagation: rshared
-        is_directory: true
     healthcheck:
       test: ["CMD-SHELL", "grep -q ' /mnt/ebooks ' /proc/mounts"]
       interval: 10s
@@ -171,22 +172,22 @@ services:
         target: /audiobooks
         read_only: true
         bind:
+          create_host_path: false
           propagation: rshared
-        is_directory: true
       - type: bind
         source: ./mnt/podcasts
         target: /podcasts
         read_only: true
         bind:
+          create_host_path: false
           propagation: rshared
-        is_directory: true
       - type: bind
         source: ./mnt/ebooks
         target: /ebooks
         read_only: true
         bind:
+          create_host_path: false
           propagation: rshared
-        is_directory: true
 
 volumes:
   rclone_cache:

@@ -13,88 +13,104 @@
 #
 # Set STORAGEBOX_* in .env (see .env.example). STORAGEBOX_PASS must be the
 # rclone-obscured password: ./scripts/obscure-password.sh 'your-password'
+# Or set STORAGEBOX_KEY_PEM to an OpenSSH private key and leave the password empty.
+# A rejected or blocked login sleeps (STORAGEBOX_AUTH_BACKOFF / STORAGEBOX_BAN_BACKOFF)
+# instead of reconnecting on every container restart. Podcast and ebook mounts
+# wait until the audiobooks mount is healthy.
+
+x-storagebox-script: &storagebox-script
+  entrypoint: !override
+    - sh
+    - /storagebox-mount.sh
+  command: !override
+    - mount-storagebox
+  volumes:
+    - ./scripts/storagebox-mount.sh:/storagebox-mount.sh:ro
 
 services:
   rclone:
+    <<: *storagebox-script
     environment: !override
       RCLONE_CONFIG_HETZNER_TYPE: sftp
       RCLONE_CONFIG_HETZNER_HOST: ${STORAGEBOX_HOST}
       RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER}
-      RCLONE_CONFIG_HETZNER_PASS: ${STORAGEBOX_PASS:-}
       RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
       RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
       RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
       RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
-    command: !override
-      - mount
-      - hetzner:${STORAGEBOX_PATH:-}audiobooks
-      - /mnt/audiobooks
-      - --allow-other
-      - --vfs-cache-mode
-      - ${VFS_CACHE_MODE:-full}
-      - --vfs-cache-max-size
-      - ${VFS_CACHE_MAX_SIZE:-2G}
-      - --vfs-cache-max-age
-      - ${VFS_CACHE_MAX_AGE:-72h}
-      - --cache-dir
-      - /cache
-      - --dir-cache-time
-      - ${VFS_DIR_CACHE_TIME:-72h}
-      - --checkers
-      - "4"
+      STORAGEBOX_PASS: ${STORAGEBOX_PASS:-}
+      STORAGEBOX_KEY_PEM: ${STORAGEBOX_KEY_PEM:-}
+      STORAGEBOX_PASS_KIND: obscured
+      STORAGEBOX_MOUNT_MODE: container
+      STORAGEBOX_PATH: ${STORAGEBOX_PATH:-}
+      RCLONE_REMOTE_SUBDIR: audiobooks
+      RCLONE_MOUNT_PATH: /mnt/audiobooks
+      VFS_CACHE_MODE: ${VFS_CACHE_MODE:-full}
+      VFS_CACHE_MAX_SIZE: ${VFS_CACHE_MAX_SIZE:-2G}
+      VFS_CACHE_MAX_AGE: ${VFS_CACHE_MAX_AGE:-72h}
+      VFS_DIR_CACHE_TIME: ${VFS_DIR_CACHE_TIME:-72h}
+      RCLONE_CHECKERS: "4"
+      STORAGEBOX_BAN_BACKOFF: ${STORAGEBOX_BAN_BACKOFF:-15m}
+      STORAGEBOX_AUTH_BACKOFF: ${STORAGEBOX_AUTH_BACKOFF:-10m}
+      STORAGEBOX_RETRY_DELAY: ${STORAGEBOX_RETRY_DELAY:-20s}
+      STORAGEBOX_SESSION_BACKOFF: ${STORAGEBOX_SESSION_BACKOFF:-2m}
 
   rclone-podcasts:
+    <<: *storagebox-script
+    depends_on:
+      rclone:
+        condition: service_healthy
     environment: !override
       RCLONE_CONFIG_HETZNER_TYPE: sftp
       RCLONE_CONFIG_HETZNER_HOST: ${STORAGEBOX_HOST}
       RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER}
-      RCLONE_CONFIG_HETZNER_PASS: ${STORAGEBOX_PASS:-}
       RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
       RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
       RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
       RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
-    command: !override
-      - mount
-      - hetzner:${STORAGEBOX_PATH:-}podcasts
-      - /mnt/podcasts
-      - --allow-other
-      - --vfs-cache-mode
-      - ${VFS_CACHE_MODE:-full}
-      - --vfs-cache-max-size
-      - ${VFS_CACHE_MAX_SIZE:-2G}
-      - --vfs-cache-max-age
-      - ${VFS_CACHE_MAX_AGE:-72h}
-      - --cache-dir
-      - /cache
-      - --dir-cache-time
-      - ${VFS_DIR_CACHE_TIME:-72h}
-      - --checkers
-      - "4"
+      STORAGEBOX_PASS: ${STORAGEBOX_PASS:-}
+      STORAGEBOX_KEY_PEM: ${STORAGEBOX_KEY_PEM:-}
+      STORAGEBOX_PASS_KIND: obscured
+      STORAGEBOX_MOUNT_MODE: container
+      STORAGEBOX_PATH: ${STORAGEBOX_PATH:-}
+      RCLONE_REMOTE_SUBDIR: podcasts
+      RCLONE_MOUNT_PATH: /mnt/podcasts
+      VFS_CACHE_MODE: ${VFS_CACHE_MODE:-full}
+      VFS_CACHE_MAX_SIZE: ${VFS_CACHE_MAX_SIZE:-2G}
+      VFS_CACHE_MAX_AGE: ${VFS_CACHE_MAX_AGE:-72h}
+      VFS_DIR_CACHE_TIME: ${VFS_DIR_CACHE_TIME:-72h}
+      RCLONE_CHECKERS: "4"
+      STORAGEBOX_BAN_BACKOFF: ${STORAGEBOX_BAN_BACKOFF:-15m}
+      STORAGEBOX_AUTH_BACKOFF: ${STORAGEBOX_AUTH_BACKOFF:-10m}
+      STORAGEBOX_RETRY_DELAY: ${STORAGEBOX_RETRY_DELAY:-20s}
+      STORAGEBOX_SESSION_BACKOFF: ${STORAGEBOX_SESSION_BACKOFF:-2m}
 
   rclone-ebooks:
+    <<: *storagebox-script
+    depends_on:
+      rclone:
+        condition: service_healthy
     environment: !override
       RCLONE_CONFIG_HETZNER_TYPE: sftp
       RCLONE_CONFIG_HETZNER_HOST: ${STORAGEBOX_HOST}
       RCLONE_CONFIG_HETZNER_USER: ${STORAGEBOX_USER}
-      RCLONE_CONFIG_HETZNER_PASS: ${STORAGEBOX_PASS:-}
       RCLONE_CONFIG_HETZNER_PORT: ${STORAGEBOX_PORT:-23}
       RCLONE_CONFIG_HETZNER_SHELL_TYPE: unix
       RCLONE_CONFIG_HETZNER_MD5SUM_COMMAND: md5 -r
       RCLONE_CONFIG_HETZNER_SHA1SUM_COMMAND: sha1 -r
-    command: !override
-      - mount
-      - hetzner:${STORAGEBOX_PATH:-}ebooks
-      - /mnt/ebooks
-      - --allow-other
-      - --vfs-cache-mode
-      - ${VFS_CACHE_MODE:-full}
-      - --vfs-cache-max-size
-      - ${VFS_CACHE_MAX_SIZE:-2G}
-      - --vfs-cache-max-age
-      - ${VFS_CACHE_MAX_AGE:-72h}
-      - --cache-dir
-      - /cache
-      - --dir-cache-time
-      - ${VFS_DIR_CACHE_TIME:-72h}
-      - --checkers
-      - "4"
+      STORAGEBOX_PASS: ${STORAGEBOX_PASS:-}
+      STORAGEBOX_KEY_PEM: ${STORAGEBOX_KEY_PEM:-}
+      STORAGEBOX_PASS_KIND: obscured
+      STORAGEBOX_MOUNT_MODE: container
+      STORAGEBOX_PATH: ${STORAGEBOX_PATH:-}
+      RCLONE_REMOTE_SUBDIR: ebooks
+      RCLONE_MOUNT_PATH: /mnt/ebooks
+      VFS_CACHE_MODE: ${VFS_CACHE_MODE:-full}
+      VFS_CACHE_MAX_SIZE: ${VFS_CACHE_MAX_SIZE:-2G}
+      VFS_CACHE_MAX_AGE: ${VFS_CACHE_MAX_AGE:-72h}
+      VFS_DIR_CACHE_TIME: ${VFS_DIR_CACHE_TIME:-72h}
+      RCLONE_CHECKERS: "4"
+      STORAGEBOX_BAN_BACKOFF: ${STORAGEBOX_BAN_BACKOFF:-15m}
+      STORAGEBOX_AUTH_BACKOFF: ${STORAGEBOX_AUTH_BACKOFF:-10m}
+      STORAGEBOX_RETRY_DELAY: ${STORAGEBOX_RETRY_DELAY:-20s}
+      STORAGEBOX_SESSION_BACKOFF: ${STORAGEBOX_SESSION_BACKOFF:-2m}
